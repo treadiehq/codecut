@@ -47,10 +47,12 @@ esac
 
 ASSET="${BIN_NAME}-${OS}-${ARCH}"
 if [ "$VERSION" = "latest" ]; then
-  URL="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+  RELEASE_URL="https://github.com/${REPO}/releases/latest/download"
 else
-  URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+  RELEASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 fi
+URL="${RELEASE_URL}/${ASSET}"
+CHECKSUM_URL="${RELEASE_URL}/SHA256SUMS"
 
 if [ -n "${CODECUT_BIN_DIR:-}" ]; then
   BIN_DIR="$CODECUT_BIN_DIR"
@@ -69,6 +71,30 @@ if ! curl -fSL --progress-bar "$URL" -o "$TMP/$BIN_NAME"; then
   die "Could not download $URL
 Check available releases: https://github.com/${REPO}/releases"
 fi
+if ! curl -fsSL "$CHECKSUM_URL" -o "$TMP/SHA256SUMS"; then
+  die "Could not download checksums from $CHECKSUM_URL; the existing install was left untouched."
+fi
+
+EXPECTED="$(awk -v asset="$ASSET" '$2 == asset { print $1; exit }' "$TMP/SHA256SUMS")"
+case "$EXPECTED" in
+  ""|*[!0-9a-fA-F]*)
+    die "SHA256SUMS does not contain a valid checksum for $ASSET; the existing install was left untouched." ;;
+esac
+[ "${#EXPECTED}" -eq 64 ] ||
+  die "SHA256SUMS does not contain a valid checksum for $ASSET; the existing install was left untouched."
+
+if command -v sha256sum >/dev/null 2>&1; then
+  ACTUAL="$(sha256sum "$TMP/$BIN_NAME" | awk '{print $1}')"
+elif command -v shasum >/dev/null 2>&1; then
+  ACTUAL="$(shasum -a 256 "$TMP/$BIN_NAME" | awk '{print $1}')"
+else
+  die "sha256sum or shasum is required to verify the Codecut download."
+fi
+if [ "$ACTUAL" != "$EXPECTED" ]; then
+  die "Checksum verification failed for $ASSET; the existing install was left untouched."
+fi
+ok "Verified SHA-256 checksum"
+
 chmod +x "$TMP/$BIN_NAME"
 if ! "$TMP/$BIN_NAME" --version >/dev/null 2>&1; then
   die "The downloaded binary failed to run; the existing install was left untouched."

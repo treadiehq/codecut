@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -26,7 +27,10 @@ afterEach(async () => {
   );
 });
 
-function releaseFetch(binary: string): typeof fetch {
+function releaseFetch(
+  binary: string,
+  checksum = createHash("sha256").update(binary).digest("hex"),
+): typeof fetch {
   return (async (input: string | URL | Request) => {
     const url =
       typeof input === "string"
@@ -43,6 +47,10 @@ function releaseFetch(binary: string): typeof fetch {
               name: "codecut-darwin-arm64",
               browser_download_url: "https://download.test/codecut",
             },
+            {
+              name: "SHA256SUMS",
+              browser_download_url: "https://download.test/SHA256SUMS",
+            },
           ],
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -50,6 +58,12 @@ function releaseFetch(binary: string): typeof fetch {
     }
     if (url === "https://download.test/codecut") {
       return new Response(binary, { status: 200 });
+    }
+    if (url === "https://download.test/SHA256SUMS") {
+      return new Response(
+        `${checksum}  codecut-darwin-arm64\n`,
+        { status: 200 },
+      );
     }
     return new Response("not found", { status: 404 });
   }) as typeof fetch;
@@ -102,6 +116,32 @@ describe("self updates", () => {
     expect(execFileSync(executable, ["--version"], { encoding: "utf8" })).toBe(
       "0.2.0\n",
     );
+  });
+
+  it("rejects a binary that does not match the published checksum", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-checksum-"),
+    );
+    temporaryDirectories.push(directory);
+    const executable = path.join(directory, "codecut");
+    const original = "#!/bin/sh\necho 0.1.0\n";
+    await writeFile(executable, original);
+    await chmod(executable, 0o755);
+
+    await expect(
+      updateCodecut({
+        currentVersion: "0.1.0",
+        executablePath: executable,
+        cwd: directory,
+        platform: "darwin",
+        architecture: "arm64",
+        fetchImpl: releaseFetch(
+          "#!/bin/sh\necho 0.2.0\n",
+          "0".repeat(64),
+        ),
+      }),
+    ).rejects.toThrow("Checksum verification failed");
+    expect(await readFile(executable, "utf8")).toBe(original);
   });
 
   it("checks for updates without downloading the binary", async () => {

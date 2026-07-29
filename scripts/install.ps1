@@ -42,11 +42,13 @@ if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') {
 }
 
 $asset = 'codecut-windows-x64.exe'
-$url = if ($version -eq 'latest') {
-  "https://github.com/$repo/releases/latest/download/$asset"
+$releaseUrl = if ($version -eq 'latest') {
+  "https://github.com/$repo/releases/latest/download"
 } else {
-  "https://github.com/$repo/releases/download/$version/$asset"
+  "https://github.com/$repo/releases/download/$version"
 }
+$url = "$releaseUrl/$asset"
+$checksumUrl = "$releaseUrl/SHA256SUMS"
 
 New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 $dest = Join-Path $binDir 'codecut.exe'
@@ -57,11 +59,37 @@ if (Test-Path $old) {
 
 Say "Downloading $asset ($version)..."
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("codecut-" + [guid]::NewGuid().ToString('N') + '.exe')
+$checksumTmp = Join-Path ([System.IO.Path]::GetTempPath()) ("codecut-" + [guid]::NewGuid().ToString('N') + '-SHA256SUMS')
 try {
   Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+  Invoke-WebRequest -Uri $checksumUrl -OutFile $checksumTmp -UseBasicParsing
 } catch {
-  Die "Could not download $url`nCheck available releases: https://github.com/$repo/releases"
+  try { Remove-Item $tmp -Force -ErrorAction Stop } catch {}
+  try { Remove-Item $checksumTmp -Force -ErrorAction Stop } catch {}
+  Die "Could not download Codecut or its checksums from $releaseUrl`nCheck available releases: https://github.com/$repo/releases"
 }
+
+$assetPattern = [regex]::Escape($asset)
+$checksumPattern = '^([0-9A-Fa-f]{64})\s+\*?' + $assetPattern + '$'
+$expected = $null
+foreach ($line in Get-Content $checksumTmp) {
+  $match = [regex]::Match($line.Trim(), $checksumPattern)
+  if ($match.Success) {
+    $expected = $match.Groups[1].Value.ToLowerInvariant()
+    break
+  }
+}
+try { Remove-Item $checksumTmp -Force -ErrorAction Stop } catch {}
+if (-not $expected) {
+  try { Remove-Item $tmp -Force -ErrorAction Stop } catch {}
+  Die "SHA256SUMS does not contain a valid checksum for $asset; the existing install was left untouched."
+}
+$actual = (Get-FileHash -Path $tmp -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actual -ne $expected) {
+  try { Remove-Item $tmp -Force -ErrorAction Stop } catch {}
+  Die "Checksum verification failed for $asset; the existing install was left untouched."
+}
+Ok 'Verified SHA-256 checksum'
 
 $downloaded = Get-CodecutVersion $tmp
 if (-not $downloaded) {

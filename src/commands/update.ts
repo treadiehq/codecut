@@ -1,4 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import {
   access,
   chmod,
@@ -124,6 +126,41 @@ async function download(
     await file.close();
   }
   await chmod(destination, 0o755);
+}
+
+async function expectedChecksum(
+  fetchImpl: Fetch,
+  url: string,
+  asset: string,
+): Promise<string> {
+  const response = await fetchImpl(url, {
+    headers: {
+      Accept: "text/plain",
+      "User-Agent": "codecut-updater",
+    },
+    redirect: "follow",
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Could not download release checksums (HTTP ${response.status}).`,
+    );
+  }
+  const manifest = await response.text();
+  for (const line of manifest.split(/\r?\n/)) {
+    const match = line.trim().match(/^([a-f0-9]{64})\s+\*?(.+)$/i);
+    if (match?.[2] === asset) {
+      return match[1]!.toLowerCase();
+    }
+  }
+  throw new Error(`SHA256SUMS does not contain a checksum for ${asset}.`);
+}
+
+async function fileChecksum(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
 }
 
 function executableVersion(executablePath: string): string | undefined {
@@ -259,6 +296,7 @@ export async function updateCodecut(options: {
   const asset = releaseAssetName(options.platform, options.architecture);
   let latestVersion: string;
   let downloadUrl: string;
+  let checksumUrl: string;
 
   if (requestedVersion === "latest") {
     const response = await fetchImpl(
@@ -284,10 +322,19 @@ export async function updateCodecut(options: {
     if (typeof releaseAsset?.browser_download_url !== "string") {
       throw new Error(`The latest Codecut release does not include ${asset}.`);
     }
+    const checksumAsset = release.assets?.find(
+      (candidate) => candidate.name === "SHA256SUMS",
+    );
+    if (typeof checksumAsset?.browser_download_url !== "string") {
+      throw new Error("The latest Codecut release does not include SHA256SUMS.");
+    }
     downloadUrl = releaseAsset.browser_download_url;
+    checksumUrl = checksumAsset.browser_download_url;
   } else {
     latestVersion = normalizeVersion(requestedVersion);
-    downloadUrl = `https://github.com/${repo}/releases/download/v${latestVersion}/${asset}`;
+    const releaseUrl = `https://github.com/${repo}/releases/download/v${latestVersion}`;
+    downloadUrl = `${releaseUrl}/${asset}`;
+    checksumUrl = `${releaseUrl}/SHA256SUMS`;
   }
 
   const shouldUpdate =
@@ -341,6 +388,13 @@ export async function updateCodecut(options: {
   let scheduled = false;
   try {
     await download(fetchImpl, downloadUrl, downloadedPath);
+    const expected = await expectedChecksum(fetchImpl, checksumUrl, asset);
+    const actual = await fileChecksum(downloadedPath);
+    if (actual !== expected) {
+      throw new Error(
+        `Checksum verification failed for ${asset}; the existing install was not changed.`,
+      );
+    }
     const downloadedVersion = executableVersion(downloadedPath);
     if (downloadedVersion !== latestVersion) {
       throw new Error(
