@@ -30,6 +30,8 @@ jobs:
           pnpm check
           pnpm smoke
           pnpm smoke:cursor
+          pnpm smoke:codex
+          pnpm smoke:polytoken
 
   build:
     needs: quality

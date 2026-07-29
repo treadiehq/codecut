@@ -1,29 +1,17 @@
 {
   "version": 1,
-  "createdAt": "2026-07-29T16:48:07.964Z",
-  "updatedAt": "2026-07-29T17:25:55.403Z",
+  "createdAt": "2026-07-29T18:33:52.613Z",
+  "updatedAt": "2026-07-29T18:33:52.613Z",
   "agents": [
     "claude",
     "cursor",
-    "codex"
+    "codex",
+    "polytoken"
   ],
   "sources": [
     "starter policy"
   ],
   "rules": [
-    {
-      "id": "meta-compliance-bb4b0707",
-      "directive": "Do not skip project rules",
-      "source": {
-        "path": "starter policy",
-        "scope": "generated",
-        "conditional": false
-      },
-      "mode": "warn",
-      "confirmed": true,
-      "enabled": true,
-      "type": "meta-compliance"
-    },
     {
       "id": "warnings-as-errors-177d5b5f",
       "directive": "Treat warnings as errors",

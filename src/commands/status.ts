@@ -54,6 +54,8 @@ export async function getStatus(
       ? path.join(projectRoot, ".cursor", "hooks.json")
       : hookAgent === "codex"
         ? path.join(projectRoot, ".codex", "hooks.json")
+        : hookAgent === "polytoken"
+          ? path.join(projectRoot, ".polytoken", "hooks.json")
         : path.join(projectRoot, ".claude", "settings.json");
   const requiredHookEvents =
     hookAgent === "cursor"
@@ -66,19 +68,47 @@ export async function getStatus(
         ]
       : hookAgent === "codex"
         ? ["PreToolUse", "PostToolUse", "Stop"]
+        : hookAgent === "polytoken"
+          ? [
+              "pre_tool_use",
+              "post_tool_use",
+              "post_tool_use_failure",
+              "post_model_turn",
+              "stop",
+            ]
         : ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"];
   let installedHookEvents: string[] = [];
   try {
-    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
-      hooks?: Record<string, unknown>;
-    };
-    installedHookEvents = requiredHookEvents.filter((event) => {
-      const definition = JSON.stringify(settings.hooks?.[event] ?? "");
-      return (
-        definition.includes("codecut") &&
-        definition.includes(`hook --agent ${hookAgent}`)
+    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;
+    if (hookAgent === "polytoken" && Array.isArray(settings)) {
+      installedHookEvents = requiredHookEvents.filter((event) =>
+        settings.some((entry) => {
+          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+            return false;
+          }
+          const definition = entry as Record<string, unknown>;
+          const serialized = JSON.stringify(definition);
+          return (
+            definition.event === event &&
+            serialized.includes("codecut") &&
+            serialized.includes("hook --agent polytoken")
+          );
+        }),
       );
-    });
+    } else if (
+      settings &&
+      typeof settings === "object" &&
+      !Array.isArray(settings)
+    ) {
+      const hooks = (settings as { hooks?: Record<string, unknown> }).hooks;
+      installedHookEvents = requiredHookEvents.filter((event) => {
+        const definition = JSON.stringify(hooks?.[event] ?? "");
+        return (
+          definition.includes("codecut") &&
+          definition.includes(`hook --agent ${hookAgent}`)
+        );
+      });
+    }
   } catch {
     // Missing or invalid settings are reported as incomplete hook health.
   }

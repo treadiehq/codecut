@@ -1,6 +1,6 @@
 {
   "name": "codecut",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Check coding agents against project rules and explain failures",
   "type": "module",
@@ -12,6 +12,7 @@
     "smoke": "pnpm build && node scripts/smoke-test.mjs",
     "smoke:codex": "pnpm build && node scripts/codex-smoke-test.mjs",
     "smoke:cursor": "pnpm build && node scripts/cursor-smoke-test.mjs",
+    "smoke:polytoken": "pnpm build && node scripts/polytoken-smoke-test.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
@@ -22,6 +23,7 @@
     "codex",
     "cursor",
     "hooks",
+    "polytoken",
     "policy-as-code"
   ],
   "author": "",

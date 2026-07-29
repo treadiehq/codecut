@@ -16,6 +16,7 @@ import {
 } from "../src/install/runtime.js";
 import {
   LEGACY_PROJECT_DIRECTORY,
+  loadPolicy,
   migrateLegacyProjectDirectory,
   PROJECT_DIRECTORY,
 } from "../src/core/project.js";
@@ -74,5 +75,42 @@ describe("persistent runtime installation", () => {
       access(path.join(projectRoot, PROJECT_DIRECTORY, "policy.json")),
     ).resolves.toBeUndefined();
     await expect(access(legacyRuntime)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("migrates legacy meta-compliance rules to advice-only", async () => {
+    const projectRoot = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-policy-migration-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const destination = path.join(projectRoot, PROJECT_DIRECTORY, "policy.json");
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(
+      destination,
+      JSON.stringify({
+        version: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        agents: ["claude"],
+        sources: ["starter policy"],
+        rules: [
+          {
+            id: "meta-compliance-legacy",
+            directive: "Do not skip project rules",
+            source: {
+              path: "starter policy",
+              scope: "generated",
+              conditional: false,
+            },
+            mode: "warn",
+            confirmed: true,
+            enabled: true,
+            type: "meta-compliance",
+          },
+        ],
+      }),
+    );
+
+    const policy = await loadPolicy(projectRoot);
+    expect(policy.rules[0]?.type).toBe("advisory");
   });
 });

@@ -18,14 +18,6 @@ import type {
 
 const STARTER_DIRECTIVES: Directive[] = [
   {
-    text: "Do not skip project rules",
-    source: {
-      path: "starter policy",
-      scope: "generated",
-      conditional: false,
-    },
-  },
-  {
     text: "Treat warnings as errors",
     source: {
       path: "starter policy",
@@ -185,22 +177,6 @@ function classifyDirective(
     };
   }
 
-  if (
-    /\b(?:don't|do not|never)\s+skip\b.*\b(?:directives?|project\s+rules?)\b/.test(
-      normalized,
-    )
-  ) {
-    return {
-      id: ruleId("meta-compliance", directive.text),
-      type: "meta-compliance",
-      directive: directive.text,
-      source: directive.source,
-      mode: "warn",
-      confirmed: true,
-      enabled: true,
-    };
-  }
-
   return {
     id: ruleId("advisory", directive.text),
     type: "advisory",
@@ -224,7 +200,7 @@ export function compilePolicy(options: {
   const directives = usingStarterPolicy
     ? STARTER_DIRECTIVES
     : options.directives;
-  const agents: AgentName[] = ["claude", "cursor", "codex"];
+  const agents: AgentName[] = ["claude", "cursor", "codex", "polytoken"];
 
   return {
     version: 1,

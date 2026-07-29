@@ -13,6 +13,12 @@ import {
   formatCodexOutput,
   normalizeCodexEvent,
 } from "../adapters/codex.js";
+import {
+  formatPolytokenOutput,
+  normalizePolytokenEvent,
+  polytokenEventName,
+  polytokenProceedOutput,
+} from "../adapters/polytoken.js";
 import { evaluatePolicy } from "../core/engine.js";
 import {
   decisionReceipt,
@@ -45,24 +51,35 @@ async function hasNativeCursorHooks(projectRoot: string): Promise<boolean> {
 }
 
 export async function runHook(agent: AgentName): Promise<void> {
+  let nativeEventName =
+    agent === "polytoken" ? process.env.POLYTOKEN_HOOK_EVENT : undefined;
   try {
-    if (!["claude", "cursor", "codex"].includes(agent)) {
+    if (!["claude", "cursor", "codex", "polytoken"].includes(agent)) {
       throw new Error(
-        `Unsupported hook agent "${agent}". Use "claude", "cursor", or "codex".`,
+        `Unsupported hook agent "${agent}". Use "claude", "cursor", "codex", or "polytoken".`,
       );
     }
 
     const rawInput = await readStdin();
     const parsedInput = JSON.parse(rawInput);
+    if (agent === "polytoken") {
+      nativeEventName = polytokenEventName(parsedInput);
+    }
     const event =
       agent === "cursor"
         ? normalizeCursorEvent(parsedInput)
         : agent === "codex"
           ? normalizeCodexEvent(parsedInput)
+          : agent === "polytoken"
+            ? normalizePolytokenEvent(parsedInput)
           : normalizeClaudeEvent(parsedInput, agent);
     const projectRoot = await findProjectRoot(event.cwd);
     if (!projectRoot) {
-      process.stdout.write("{}\n");
+      process.stdout.write(
+        `${JSON.stringify(
+          agent === "polytoken" ? polytokenProceedOutput(nativeEventName) : {},
+        )}\n`,
+      );
       return;
     }
     const cursorCompatibilityEvent =
@@ -97,7 +114,11 @@ export async function runHook(agent: AgentName): Promise<void> {
     await appendReceipts(projectRoot, acknowledgements);
     receipts = [...receipts, ...acknowledgements];
     if (event.stage === "agent-response") {
-      process.stdout.write("{}\n");
+      process.stdout.write(
+        `${JSON.stringify(
+          agent === "polytoken" ? { outcome: "acknowledged" } : {},
+        )}\n`,
+      );
       return;
     }
     const decision = evaluatePolicy({
@@ -106,17 +127,41 @@ export async function runHook(agent: AgentName): Promise<void> {
       receipts,
       diffStats,
     });
+    const decisionRuleIds = decision.violations
+      .map((violation) => violation.ruleId)
+      .sort();
+    const warningAlreadySent =
+      decision.outcome === "warn" &&
+      receipts.some(
+        (receipt) =>
+          receipt.kind === "decision" &&
+          receipt.outcome === "warn" &&
+          JSON.stringify([...(receipt.ruleIds ?? [])].sort()) ===
+            JSON.stringify(decisionRuleIds),
+      );
     await appendReceipts(projectRoot, [decisionReceipt(event, decision)]);
 
+    const outputEvent =
+      agent === "polytoken" && warningAlreadySent
+        ? { ...event, stopHookActive: true }
+        : event;
     const output =
       agent === "cursor"
-        ? formatCursorOutput(event, decision)
+        ? formatCursorOutput(outputEvent, decision)
         : agent === "codex"
-          ? formatCodexOutput(event, decision)
-          : formatClaudeOutput(event, decision);
+          ? formatCodexOutput(outputEvent, decision)
+          : agent === "polytoken"
+            ? formatPolytokenOutput(outputEvent, decision)
+            : formatClaudeOutput(outputEvent, decision);
     process.stdout.write(`${JSON.stringify(output)}\n`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (agent === "polytoken") {
+      process.stdout.write(
+        `${JSON.stringify(polytokenProceedOutput(nativeEventName))}\n`,
+      );
+      return;
+    }
     process.stdout.write(
       `${JSON.stringify({
         systemMessage: `Codecut could not check this action and allowed it: ${message}`,

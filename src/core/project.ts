@@ -65,7 +65,15 @@ export async function findProjectRoot(startDirectory: string): Promise<string | 
 
 export async function loadPolicy(projectRoot: string): Promise<Policy> {
   const raw = await readFile(policyPath(projectRoot), "utf8");
-  return policySchema.parse(JSON.parse(raw));
+  const policy = policySchema.parse(JSON.parse(raw));
+  return {
+    ...policy,
+    rules: policy.rules.map((rule) =>
+      rule.type === "meta-compliance"
+        ? { ...rule, type: "advisory" as const }
+        : rule,
+    ),
+  };
 }
 
 export async function writePolicy(

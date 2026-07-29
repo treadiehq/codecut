@@ -43,6 +43,9 @@ codecut setup --agent claude
 
 # Codex
 codecut setup --agent codex
+
+# Polytoken
+codecut setup --agent polytoken
 ```
 
 That is it. Codecut adds the agent hook, checks that it works, and creates
@@ -62,8 +65,8 @@ codecut setup --agent cursor --refresh-policy --accept
 You can also edit `.codecut/policy.json` directly.
 
 Real-time enforcement requires lifecycle hooks from the coding agent. Codecut's
-policy engine is agent-neutral; Claude Code, Cursor, and Codex currently have
-native hook installers.
+policy engine is agent-neutral; Claude Code, Cursor, Codex, and Polytoken
+currently have native hook installers.
 
 ```sh
 codecut status  # Show active rules and hook health

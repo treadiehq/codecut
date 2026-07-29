@@ -97,7 +97,6 @@ describe("starter policy compilation", () => {
 
     expect(compiled.sources).toEqual(["starter policy"]);
     expect(compiled.rules.map((rule) => rule.directive)).toEqual([
-      "Do not skip project rules",
       "Treat warnings as errors",
       "All unit tests must pass",
       "Keep changes small and focused",
@@ -105,14 +104,19 @@ describe("starter policy compilation", () => {
       "Run tests locally",
       "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
     ]);
-    expect(compiled.rules[5]?.type).toBe("local-testing");
+    expect(compiled.rules[4]?.type).toBe("local-testing");
   });
 
   it("classifies David's directives into the intended policy types", () => {
     const compiled = policy();
-    expect(compiled.agents).toEqual(["claude", "cursor", "codex"]);
+    expect(compiled.agents).toEqual([
+      "claude",
+      "cursor",
+      "codex",
+      "polytoken",
+    ]);
     expect(compiled.rules.map((rule) => rule.type)).toEqual([
-      "meta-compliance",
+      "advisory",
       "warnings-as-errors",
       "require-passing-tests",
       "blast-radius",
@@ -125,6 +129,14 @@ describe("starter policy compilation", () => {
         .filter((rule) => rule.mode === "block")
         .every((rule) => rule.confirmed),
     ).toBe(true);
+  });
+
+  it("labels generic compliance instructions as advice-only", () => {
+    const compiled = policy();
+    const genericCompliance = compiled.rules[0];
+
+    expect(genericCompliance?.directive).toBe("Don't skip directives");
+    expect(genericCompliance?.type).toBe("advisory");
   });
 
   it("downgrades inferred hard blocks until explicitly accepted", () => {

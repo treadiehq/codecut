@@ -1,6 +1,12 @@
 import { z } from "zod";
 
-export const agentNameSchema = z.enum(["claude", "cursor", "codex", "unknown"]);
+export const agentNameSchema = z.enum([
+  "claude",
+  "cursor",
+  "codex",
+  "polytoken",
+  "unknown",
+]);
 export type AgentName = z.infer<typeof agentNameSchema>;
 
 export const directiveSourceSchema = z.object({

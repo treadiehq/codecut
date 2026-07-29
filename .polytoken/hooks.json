@@ -1,0 +1,37 @@
+[
+  {
+    "name": "codecut-pre-tool-use",
+    "event": "pre_tool_use",
+    "handler": {
+      "bash": "CODECUT_ROOT=\"${POLYTOKEN_PROJECT_DIR:-${POLYTOKEN_PROJECT_PATH:-$PWD}}\"; CODECUT_BIN=\"$CODECUT_ROOT/.codecut/runtime/codecut\"; [ -x \"$CODECUT_BIN\" ] || CODECUT_BIN=\"$CODECUT_BIN.exe\"; \"$CODECUT_BIN\" hook --agent polytoken"
+    }
+  },
+  {
+    "name": "codecut-post-tool-use",
+    "event": "post_tool_use",
+    "handler": {
+      "bash": "CODECUT_ROOT=\"${POLYTOKEN_PROJECT_DIR:-${POLYTOKEN_PROJECT_PATH:-$PWD}}\"; CODECUT_BIN=\"$CODECUT_ROOT/.codecut/runtime/codecut\"; [ -x \"$CODECUT_BIN\" ] || CODECUT_BIN=\"$CODECUT_BIN.exe\"; \"$CODECUT_BIN\" hook --agent polytoken"
+    }
+  },
+  {
+    "name": "codecut-post-tool-use-failure",
+    "event": "post_tool_use_failure",
+    "handler": {
+      "bash": "CODECUT_ROOT=\"${POLYTOKEN_PROJECT_DIR:-${POLYTOKEN_PROJECT_PATH:-$PWD}}\"; CODECUT_BIN=\"$CODECUT_ROOT/.codecut/runtime/codecut\"; [ -x \"$CODECUT_BIN\" ] || CODECUT_BIN=\"$CODECUT_BIN.exe\"; \"$CODECUT_BIN\" hook --agent polytoken"
+    }
+  },
+  {
+    "name": "codecut-post-model-turn",
+    "event": "post_model_turn",
+    "handler": {
+      "bash": "CODECUT_ROOT=\"${POLYTOKEN_PROJECT_DIR:-${POLYTOKEN_PROJECT_PATH:-$PWD}}\"; CODECUT_BIN=\"$CODECUT_ROOT/.codecut/runtime/codecut\"; [ -x \"$CODECUT_BIN\" ] || CODECUT_BIN=\"$CODECUT_BIN.exe\"; \"$CODECUT_BIN\" hook --agent polytoken"
+    }
+  },
+  {
+    "name": "codecut-stop",
+    "event": "stop",
+    "handler": {
+      "bash": "CODECUT_ROOT=\"${POLYTOKEN_PROJECT_DIR:-${POLYTOKEN_PROJECT_PATH:-$PWD}}\"; CODECUT_BIN=\"$CODECUT_ROOT/.codecut/runtime/codecut\"; [ -x \"$CODECUT_BIN\" ] || CODECUT_BIN=\"$CODECUT_BIN.exe\"; \"$CODECUT_BIN\" hook --agent polytoken"
+    }
+  }
+]

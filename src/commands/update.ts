@@ -14,6 +14,7 @@ import {
 import { installClaudeHooks } from "../install/claude.js";
 import { installCodexHooks } from "../install/codex.js";
 import { installCursorHooks } from "../install/cursor.js";
+import { installPolytokenHooks } from "../install/polytoken.js";
 import { installRuntime } from "../install/runtime.js";
 
 type Fetch = typeof globalThis.fetch;
@@ -164,6 +165,11 @@ async function refreshProject(
       agent: "codex",
       settings: path.join(projectRoot, ".codex", "hooks.json"),
       install: installCodexHooks,
+    },
+    {
+      agent: "polytoken",
+      settings: path.join(projectRoot, ".polytoken", "hooks.json"),
+      install: installPolytokenHooks,
     },
   ];
   for (const installer of installers) {

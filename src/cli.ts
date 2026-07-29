@@ -33,7 +33,7 @@ function agent(value: string): AgentName {
   const parsed = agentNameSchema.safeParse(value.toLowerCase());
   if (!parsed.success || parsed.data === "unknown") {
     throw new Error(
-      `Unsupported agent "${value}". Use "claude", "cursor", or "codex".`,
+      `Unsupported agent "${value}". Use "claude", "cursor", "codex", or "polytoken".`,
     );
   }
   return parsed.data;
@@ -107,7 +107,7 @@ program
   .description("Install or update Codecut, then check that it works")
   .option(
     "--agent <agent>",
-    "agent to configure: claude, cursor, or codex",
+    "agent to configure: claude, cursor, codex, or polytoken",
     "claude",
   )
   .option("--cwd <directory>", "project directory", process.cwd())
@@ -124,6 +124,7 @@ Examples:
   codecut setup --agent claude
   codecut setup --agent cursor
   codecut setup --agent codex
+  codecut setup --agent polytoken
   codecut setup --agent claude --accept
 `,
   )
@@ -134,7 +135,7 @@ program
   .description("Create a policy and install agent hooks")
   .option(
     "--agent <agent>",
-    "agent to configure: claude, cursor, or codex",
+    "agent to configure: claude, cursor, codex, or polytoken",
     "claude",
   )
   .option("--cwd <directory>", "project directory", process.cwd())
@@ -200,7 +201,7 @@ program
   .description("Show policy rules and hook health")
   .option(
     "--agent <agent>",
-    "agent to check: claude, cursor, or codex",
+    "agent to check: claude, cursor, codex, or polytoken",
     "claude",
   )
   .option("--cwd <directory>", "project directory", process.cwd())

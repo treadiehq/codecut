@@ -22,6 +22,10 @@ import {
   installCodexHooks,
   validateCodexSettings,
 } from "../install/codex.js";
+import {
+  installPolytokenHooks,
+  validatePolytokenSettings,
+} from "../install/polytoken.js";
 import { installRuntime } from "../install/runtime.js";
 
 export type InitResult = {
@@ -44,9 +48,9 @@ export async function initializeProject(options: {
   force: boolean;
   runtimeSourcePath?: string;
 }): Promise<InitResult> {
-  if (!["claude", "cursor", "codex"].includes(options.agent)) {
+  if (!["claude", "cursor", "codex", "polytoken"].includes(options.agent)) {
     throw new Error(
-      `Unsupported agent "${options.agent}". Use "claude", "cursor", or "codex".`,
+      `Unsupported agent "${options.agent}". Use "claude", "cursor", "codex", or "polytoken".`,
     );
   }
 
@@ -56,6 +60,8 @@ export async function initializeProject(options: {
     await validateCursorSettings(projectRoot);
   } else if (options.agent === "codex") {
     await validateCodexSettings(projectRoot);
+  } else if (options.agent === "polytoken") {
+    await validatePolytokenSettings(projectRoot);
   } else {
     await validateClaudeSettings(projectRoot);
   }
@@ -99,6 +105,8 @@ export async function initializeProject(options: {
       ? await installCursorHooks(projectRoot)
       : options.agent === "codex"
         ? await installCodexHooks(projectRoot)
+        : options.agent === "polytoken"
+          ? await installPolytokenHooks(projectRoot)
         : await installClaudeHooks(projectRoot);
 
   return {
