@@ -1,0 +1,45 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CODECUT_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent codex",
+            "commandWindows": "powershell -NoProfile -Command \"& { $root = (git rev-parse --show-toplevel).Trim(); & (Join-Path $root '.codecut\\runtime\\codecut.exe') hook --agent codex }\"",
+            "timeout": 5,
+            "statusMessage": "Checking Codecut policy"
+          }
+        ],
+        "matcher": "Bash|apply_patch|Edit|Write|mcp__.*"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CODECUT_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent codex",
+            "commandWindows": "powershell -NoProfile -Command \"& { $root = (git rev-parse --show-toplevel).Trim(); & (Join-Path $root '.codecut\\runtime\\codecut.exe') hook --agent codex }\"",
+            "timeout": 5,
+            "statusMessage": "Checking Codecut policy"
+          }
+        ],
+        "matcher": "Bash|apply_patch|Edit|Write|mcp__.*"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CODECUT_ROOT=\"$(git rev-parse --show-toplevel 2>/dev/null || pwd)\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent codex",
+            "commandWindows": "powershell -NoProfile -Command \"& { $root = (git rev-parse --show-toplevel).Trim(); & (Join-Path $root '.codecut\\runtime\\codecut.exe') hook --agent codex }\"",
+            "timeout": 10,
+            "statusMessage": "Checking Codecut policy"
+          }
+        ]
+      }
+    ]
+  }
+}

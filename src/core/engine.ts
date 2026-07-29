@@ -1,0 +1,370 @@
+import {
+  extractAddedComments,
+  extractCommand,
+  extractEditedPaths,
+} from "./events.js";
+import { matchesAny } from "./patterns.js";
+import type {
+  DiffStats,
+  NormalizedHookEvent,
+  Policy,
+  PolicyDecision,
+  PolicyRule,
+  Receipt,
+  RuleViolation,
+} from "./schema.js";
+
+function severity(rule: PolicyRule): "warn" | "block" {
+  return rule.mode === "block" && rule.confirmed ? "block" : "warn";
+}
+
+function violation(
+  rule: PolicyRule,
+  evidence: string,
+  recovery: string,
+): RuleViolation {
+  return {
+    ruleId: rule.id,
+    directive: rule.directive,
+    source: rule.source,
+    severity: severity(rule),
+    evidence,
+    recovery,
+  };
+}
+
+function after(receipt: Receipt, timestamp: string | undefined): boolean {
+  return !timestamp || receipt.timestamp >= timestamp;
+}
+
+function latest(receipts: Receipt[]): Receipt | undefined {
+  return [...receipts].sort((left, right) =>
+    right.timestamp.localeCompare(left.timestamp),
+  )[0];
+}
+
+function countLabel(
+  count: number,
+  singular: string,
+  plural = `${singular}s`,
+): string {
+  return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function evaluatePreTool(
+  policy: Policy,
+  event: NormalizedHookEvent,
+): RuleViolation[] {
+  const command = extractCommand(event.toolInput) ?? "";
+  const toolIntent = `${event.toolName ?? ""} ${
+    event.toolInput === undefined ? "" : JSON.stringify(event.toolInput)
+  }`;
+  const violations: RuleViolation[] = [];
+
+  for (const rule of policy.rules) {
+    if (!rule.enabled || rule.mode === "off" || rule.type !== "local-testing") {
+      continue;
+    }
+
+    const looksLikeTest =
+      matchesAny(command, rule.testCommandPatterns) ||
+      /(?:^|[^a-z])tests?(?:[^a-z]|$)/i.test(toolIntent);
+    const looksRemote =
+      matchesAny(command, rule.remoteCommandPatterns) ||
+      matchesAny(event.toolName ?? "", rule.remoteToolPatterns);
+    if (looksLikeTest && looksRemote) {
+      violations.push(
+        violation(
+          rule,
+          `This test would run remotely through ${event.toolName ?? "an unknown tool"}.`,
+          "Run the test locally instead.",
+        ),
+      );
+    }
+  }
+
+  return violations;
+}
+
+function evaluatePostTool(
+  policy: Policy,
+  event: NormalizedHookEvent,
+  receipts: Receipt[],
+): RuleViolation[] {
+  if (event.stage !== "post-tool") {
+    return [];
+  }
+
+  const violations: RuleViolation[] = [];
+  const currentCommand = latest(
+    receipts.filter(
+      (receipt) =>
+        receipt.kind === "command" &&
+        receipt.timestamp === event.occurredAt,
+    ),
+  );
+  if (currentCommand?.warningCount) {
+    for (const rule of policy.rules) {
+      if (
+        !rule.enabled ||
+        rule.mode === "off" ||
+        rule.type !== "warnings-as-errors" ||
+        (!currentCommand.isVerification &&
+          !matchesAny(currentCommand.command ?? "", rule.commandPatterns))
+      ) {
+        continue;
+      }
+      violations.push(
+        violation(
+          rule,
+          `${countLabel(currentCommand.warningCount, "warning")} found in the check output.`,
+          "Fix the warnings, then rerun the same command.",
+        ),
+      );
+    }
+  }
+
+  const comments = extractAddedComments(event);
+  const editedPaths = extractEditedPaths(event);
+  for (const rule of policy.rules) {
+    if (
+      !rule.enabled ||
+      rule.mode === "off" ||
+      rule.type !== "comment-quality" ||
+      !editedPaths.some((editedPath) =>
+        matchesAny(editedPath, rule.filePatterns),
+      )
+    ) {
+      continue;
+    }
+    const matches = comments.filter((comment) =>
+      matchesAny(comment, rule.bannedPatterns),
+    );
+    if (matches.length > 0) {
+      violations.push(
+        violation(
+          rule,
+          `${countLabel(matches.length, "new code comment")} mentions temporary agent context.`,
+          "Remove it or explain only a lasting code constraint. Do not mention prompts, instructions, tickets, or temporary files.",
+        ),
+      );
+    }
+  }
+
+  return violations;
+}
+
+function evaluateStop(
+  policy: Policy,
+  receipts: Receipt[],
+  diffStats: DiffStats | undefined,
+): RuleViolation[] {
+  const violations: RuleViolation[] = [];
+  const edits = receipts.filter((receipt) => receipt.kind === "edit");
+  const latestEdit = latest(edits)?.timestamp;
+  const hasChanges = Boolean(latestEdit || (diffStats && diffStats.files > 0));
+  const commandsAfterEdit = receipts.filter(
+    (receipt) => receipt.kind === "command" && after(receipt, latestEdit),
+  );
+
+  for (const rule of policy.rules) {
+    if (!rule.enabled || rule.mode === "off") {
+      continue;
+    }
+
+    if (rule.type === "require-passing-tests" && hasChanges) {
+      const latestTest = latest(
+        commandsAfterEdit.filter(
+          (receipt) =>
+            receipt.isTest ||
+            matchesAny(receipt.command ?? "", rule.commandPatterns),
+        ),
+      );
+      if (!latestTest?.success) {
+        violations.push(
+          violation(
+            rule,
+            latestTest
+              ? "The latest test failed after the last change."
+              : "No passing test was found after the last change.",
+            "Run the relevant unit tests and make sure they pass.",
+          ),
+        );
+      }
+      continue;
+    }
+
+    if (rule.type === "warnings-as-errors" && hasChanges) {
+      const latestVerification = latest(
+        commandsAfterEdit.filter(
+          (receipt) =>
+            receipt.isVerification ||
+            matchesAny(receipt.command ?? "", rule.commandPatterns),
+        ),
+      );
+      if (
+        latestVerification?.success &&
+        (latestVerification.warningCount ?? 0) > 0
+      ) {
+        violations.push(
+          violation(
+            rule,
+            `${countLabel(latestVerification.warningCount ?? 0, "warning")} remain in the latest check output.`,
+            "Fix the warnings, then rerun the check.",
+          ),
+        );
+      }
+      continue;
+    }
+
+    if (rule.type === "local-testing" && hasChanges) {
+      const latestTest = latest(
+        commandsAfterEdit.filter(
+          (receipt) =>
+            receipt.isTest ||
+            matchesAny(receipt.command ?? "", rule.testCommandPatterns),
+        ),
+      );
+      if (!latestTest || latestTest.location !== "local") {
+        violations.push(
+          violation(
+            rule,
+            latestTest
+              ? `The latest test ran at ${latestTest.location ?? "an unknown location"}, not locally.`
+              : "No local test was found after the last change.",
+            "Run the relevant tests locally.",
+          ),
+        );
+      }
+      continue;
+    }
+
+    if (rule.type === "verification-evidence" && hasChanges) {
+      const latestVerification = latest(
+        commandsAfterEdit.filter(
+          (receipt) =>
+            receipt.isVerification ||
+            matchesAny(receipt.command ?? "", rule.commandPatterns),
+        ),
+      );
+      if (!latestVerification?.success) {
+        violations.push(
+          violation(
+            rule,
+            latestVerification
+              ? "The latest check failed."
+              : "No successful test, lint, typecheck, or build was found after the last change.",
+            "Run a test, lint, typecheck, or build successfully and cite the result.",
+          ),
+        );
+      }
+      continue;
+    }
+
+    if (rule.type === "blast-radius" && diffStats) {
+      const changedLines = diffStats.added + diffStats.deleted;
+      const acknowledged = receipts.some(
+        (receipt) =>
+          receipt.kind === "acknowledgement" &&
+          after(receipt, latestEdit) &&
+          receipt.ruleIds?.includes(rule.id) &&
+          receipt.diffFiles === diffStats.files &&
+          receipt.diffChangedLines === changedLines,
+      );
+      if (acknowledged) {
+        continue;
+      }
+      if (
+        diffStats.files > rule.maxFiles ||
+        changedLines > rule.maxChangedLines
+      ) {
+        violations.push(
+          violation(
+            rule,
+            `Current changes span ${countLabel(diffStats.files, "file")} and ${countLabel(changedLines, "line")}.`,
+            `Reduce the change to at most ${rule.maxFiles} files and ${rule.maxChangedLines} lines, or explain the larger scope in the final response. The explanation applies until the changes change.`,
+          ),
+        );
+      }
+    }
+  }
+
+  return violations;
+}
+
+function summarize(
+  policy: Policy,
+  receipts: Receipt[],
+  diffStats: DiffStats | undefined,
+  violations: RuleViolation[],
+): string {
+  const activeRules = policy.rules.filter(
+    (rule) => rule.enabled && rule.mode !== "off",
+  );
+  const advisoryRules = activeRules.filter(
+    (rule) => rule.type === "advisory",
+  ).length;
+  const edits = receipts.filter((receipt) => receipt.kind === "edit");
+  const latestEdit = latest(edits)?.timestamp;
+  const hasWorkingDiff = Boolean(diffStats && diffStats.files > 0);
+  const latestVerification = latest(
+    receipts.filter(
+      (receipt) =>
+        receipt.kind === "command" &&
+        receipt.isVerification &&
+        receipt.success &&
+        after(receipt, latestEdit),
+    ),
+  );
+
+  const parts = [
+    `${countLabel(activeRules.length, "rule")} checked`,
+    violations.length === 0
+      ? "no issues"
+      : countLabel(violations.length, "issue"),
+  ];
+  if (latestEdit || hasWorkingDiff) {
+    parts.push(latestVerification ? "verification passed" : "verification needed");
+  }
+  if (advisoryRules > 0) {
+    parts.push(`${countLabel(advisoryRules, "rule")} advice-only`);
+  }
+  if (diffStats) {
+    const changedLines = diffStats.added + diffStats.deleted;
+    parts.push(
+      `${countLabel(diffStats.files, "file")}, ${countLabel(changedLines, "line")} changed${diffStats.complete ? "" : " (partial count)"}`,
+    );
+  }
+  return parts.join(" · ");
+}
+
+export function evaluatePolicy(options: {
+  policy: Policy;
+  event: NormalizedHookEvent;
+  receipts: Receipt[];
+  diffStats?: DiffStats;
+}): PolicyDecision {
+  const violations =
+    options.event.stage === "pre-tool"
+      ? evaluatePreTool(options.policy, options.event)
+      : options.event.stage === "stop"
+        ? evaluateStop(options.policy, options.receipts, options.diffStats)
+        : evaluatePostTool(options.policy, options.event, options.receipts);
+
+  const outcome = violations.some((item) => item.severity === "block")
+    ? "block"
+    : violations.length > 0
+      ? "warn"
+      : "allow";
+
+  return {
+    outcome,
+    violations,
+    summary: summarize(
+      options.policy,
+      options.receipts,
+      options.diffStats,
+      violations,
+    ),
+  };
+}

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "command": "CODECUT_ROOT=\"${CURSOR_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent cursor",
+        "timeout": 5,
+        "matcher": "Shell|Edit|Write|MultiEdit|NotebookEdit|apply_patch|MCP: .*"
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "CODECUT_ROOT=\"${CURSOR_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent cursor",
+        "timeout": 5,
+        "matcher": "Shell|Edit|Write|MultiEdit|NotebookEdit|apply_patch|MCP: .*"
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "CODECUT_ROOT=\"${CURSOR_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent cursor",
+        "timeout": 5,
+        "matcher": "Shell|Edit|Write|MultiEdit|NotebookEdit|apply_patch|MCP: .*"
+      }
+    ],
+    "stop": [
+      {
+        "command": "CODECUT_ROOT=\"${CURSOR_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent cursor",
+        "timeout": 10,
+        "loop_limit": 4
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "CODECUT_ROOT=\"${CURSOR_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent cursor",
+        "timeout": 5
+      }
+    ]
+  }
+}

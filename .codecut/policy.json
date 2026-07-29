@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "createdAt": "2026-07-29T16:48:07.964Z",
+  "updatedAt": "2026-07-29T17:25:55.403Z",
+  "agents": [
+    "claude",
+    "cursor",
+    "codex"
+  ],
+  "sources": [
+    "starter policy"
+  ],
+  "rules": [
+    {
+      "id": "meta-compliance-bb4b0707",
+      "directive": "Do not skip project rules",
+      "source": {
+        "path": "starter policy",
+        "scope": "generated",
+        "conditional": false
+      },
+      "mode": "warn",
+      "confirmed": true,
+      "enabled": true,
+      "type": "meta-compliance"
+    },
+    {
+      "id": "warnings-as-errors-177d5b5f",
+      "directive": "Treat warnings as errors",
+      "source": {
+        "path": "starter policy",
+        "scope": "generated",
+        "conditional": false
+      },
+      "mode": "block",
+      "confirmed": true,
+      "enabled": true,
+      "type": "warnings-as-errors",
+      "commandPatterns": [
+        "(?:^|[;&|]\\s*|\\s)(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?test(?:\\s|$|:)",
+        "(?:^|[;&|]\\s*|\\s)(?:npx\\s+)?vitest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:python(?:3)?\\s+-m\\s+)?pytest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)cargo\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)go\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:bundle\\s+exec\\s+)?rspec(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:dotnet\\s+test|mvn\\s+test|gradle\\s+test)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?(?:lint|typecheck|check|build)(?:\\s|$|:)",
+        "(?:^|[;&|]\\s*|\\s)(?:npx\\s+)?(?:eslint|tsc)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:ruff|mypy|pyright)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)cargo\\s+(?:check|clippy|build)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)go\\s+(?:vet|build)(?:\\s|$)"
+      ],
+      "warningPatterns": [
+        "(?:^|\\s)(?:npm\\s+warn|warning(?:\\s+[A-Z]+\\d+)?:|\\[warn(?:ing)?\\]|[A-Za-z]+Warning:)",
+        "\\b[1-9]\\d*\\s+warnings?\\b",
+        "\\bdeprecated\\b(?:\\s+(?:API|option|feature|function|method|property)|:)"
+      ]
+    },
+    {
+      "id": "require-passing-tests-52a414b9",
+      "directive": "All unit tests must pass",
+      "source": {
+        "path": "starter policy",
+        "scope": "generated",
+        "conditional": false
+      },
+      "mode": "block",
+      "confirmed": true,
+      "enabled": true,
+      "type": "require-passing-tests",
+      "commandPatterns": [
+        "(?:^|[;&|]\\s*|\\s)(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?test(?:\\s|$|:)",
+        "(?:^|[;&|]\\s*|\\s)(?:npx\\s+)?vitest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:python(?:3)?\\s+-m\\s+)?pytest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)cargo\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)go\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:bundle\\s+exec\\s+)?rspec(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:dotnet\\s+test|mvn\\s+test|gradle\\s+test)(?:\\s|$)"
+      ],
+      "testOutputPatterns": [
+        "\\bTest Files\\s+[1-9]\\d*\\s+passed\\b",
+        "\\bTests:\\s+[1-9]\\d*\\s+passed\\b",
+        "\\b[1-9]\\d*\\s+(?:tests?|specs?)\\s+passed\\b",
+        "(?:^|\\s)[1-9]\\d*\\s+passed(?:\\s|,|$)",
+        "\\btest result:\\s+ok\\b"
+      ]
+    },
+    {
+      "id": "blast-radius-4c491ac5",
+      "directive": "Keep changes small and focused",
+      "source": {
+        "path": "starter policy",
+        "scope": "generated",
+        "conditional": false
+      },
+      "mode": "warn",
+      "confirmed": true,
+      "enabled": true,
+      "type": "blast-radius",
+      "maxFiles": 12,
+      "maxChangedLines": 500
+    },
+    {
+      "id": "verification-evidence-9ee1f23e",
+      "directive": "Verify your work",
+      "source": {
+        "path": "starter policy",
+        "scope": "generated",
+        "conditional": false
+      },
+      "mode": "warn",
+      "confirmed": true,
+      "enabled": true,
+      "type": "verification-evidence",
+      "commandPatterns": [
+        "(?:^|[;&|]\\s*|\\s)(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?test(?:\\s|$|:)",
+        "(?:^|[;&|]\\s*|\\s)(?:npx\\s+)?vitest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:python(?:3)?\\s+-m\\s+)?pytest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)cargo\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)go\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:bundle\\s+exec\\s+)?rspec(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:dotnet\\s+test|mvn\\s+test|gradle\\s+test)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?(?:lint|typecheck|check|build)(?:\\s|$|:)",
+        "(?:^|[;&|]\\s*|\\s)(?:npx\\s+)?(?:eslint|tsc)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:ruff|mypy|pyright)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)cargo\\s+(?:check|clippy|build)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)go\\s+(?:vet|build)(?:\\s|$)"
+      ]
+    },
+    {
+      "id": "local-testing-2ba40475",
+      "directive": "Run tests locally",
+      "source": {
+        "path": "starter policy",
+        "scope": "generated",
+        "conditional": false
+      },
+      "mode": "block",
+      "confirmed": true,
+      "enabled": true,
+      "type": "local-testing",
+      "testCommandPatterns": [
+        "(?:^|[;&|]\\s*|\\s)(?:npm|pnpm|yarn|bun)\\s+(?:run\\s+)?test(?:\\s|$|:)",
+        "(?:^|[;&|]\\s*|\\s)(?:npx\\s+)?vitest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:python(?:3)?\\s+-m\\s+)?pytest(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)cargo\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)go\\s+test(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:bundle\\s+exec\\s+)?rspec(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:dotnet\\s+test|mvn\\s+test|gradle\\s+test)(?:\\s|$)"
+      ],
+      "remoteCommandPatterns": [
+        "(?:^|[;&|]\\s*|\\s)ssh(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)gh\\s+(?:workflow\\s+run|run\\s+rerun)(?:\\s|$)",
+        "(?:^|[;&|]\\s*|\\s)(?:circleci|buildkite-agent|actuate)\\b",
+        "(?:^|[;&|]\\s*|\\s)kubectl\\s+exec(?:\\s|$)"
+      ],
+      "remoteToolPatterns": [
+        "(?:remote|cloud|ci|runner)"
+      ]
+    },
+    {
+      "id": "comment-quality-2a135f1f",
+      "directive": "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
+      "source": {
+        "path": "starter policy",
+        "scope": "generated",
+        "conditional": false
+      },
+      "mode": "warn",
+      "confirmed": true,
+      "enabled": true,
+      "type": "comment-quality",
+      "filePatterns": [
+        "\\.(?:[cm]?[jt]sx?|py|rb|rs|go|java|kt|kts|swift|php|cs|cpp|cc|cxx|h|hpp|sql|sh|bash|zsh)$"
+      ],
+      "bannedPatterns": [
+        "\\b(?:AGENTS|CLAUDE|GEMINI)\\.md\\b",
+        "\\b(?:system\\s+)?prompt\\b",
+        "\\b(?:agent\\s+)?instructions?\\b",
+        "\\bdirectives?\\b",
+        "\\b[A-Z][A-Z0-9]{1,9}-\\d+\\b",
+        "(?:\\.cursor/(?:plans|rules)|/tmp/|temporary\\s+spec|ephemeral\\s+spec)",
+        "\\b(?:as\\s+requested|per\\s+(?:the\\s+)?(?:prompt|instructions?)|the\\s+agent|I\\s+(?:added|changed|implemented))\\b"
+      ]
+    }
+  ]
+}

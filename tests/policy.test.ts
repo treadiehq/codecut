@@ -1,0 +1,569 @@
+import { describe, expect, it } from "vitest";
+import { compilePolicy } from "../src/core/compiler.js";
+import { evaluatePolicy } from "../src/core/engine.js";
+import {
+  deriveAcknowledgementReceipts,
+  deriveReceipts,
+} from "../src/core/events.js";
+import type {
+  Directive,
+  NormalizedHookEvent,
+  Policy,
+  Receipt,
+} from "../src/core/schema.js";
+import { policySchema } from "../src/core/schema.js";
+
+const directives = [
+  "Don't skip directives",
+  "Treat warnings as errors",
+  "All unit tests must pass",
+  "Favor high confidence changes with a low blast radius",
+  "Verify, don't assume",
+  "Use local machines for testing",
+  "Do not add comments that reference prompts, instructions, tickets, or temporary specification files",
+].map(
+  (text, index): Directive => ({
+    text,
+    source: { path: "CLAUDE.md", line: index + 1, scope: "project" },
+  }),
+);
+
+function policy(accept = true): Policy {
+  return compilePolicy({
+    directives,
+    sources: ["CLAUDE.md"],
+    agent: "claude",
+    acceptBlockingRules: accept,
+    now: new Date("2026-01-01T00:00:00.000Z"),
+  });
+}
+
+function hookEvent(
+  stage: NormalizedHookEvent["stage"],
+  overrides: Partial<NormalizedHookEvent> = {},
+): NormalizedHookEvent {
+  return {
+    agent: "claude",
+    stage,
+    sessionId: "session-1",
+    cwd: "/tmp/project",
+    occurredAt: "2026-01-01T00:00:03.000Z",
+    stopHookActive: false,
+    loopCount: 0,
+    ...overrides,
+  };
+}
+
+function edit(timestamp = "2026-01-01T00:00:01.000Z"): Receipt {
+  return {
+    version: 1,
+    id: `edit-${timestamp}`,
+    timestamp,
+    sessionId: "session-1",
+    kind: "edit",
+    path: "src/example.ts",
+    changedLines: 4,
+  };
+}
+
+function verification(
+  overrides: Partial<Receipt> = {},
+  timestamp = "2026-01-01T00:00:02.000Z",
+): Receipt {
+  return {
+    version: 1,
+    id: `verification-${timestamp}`,
+    timestamp,
+    sessionId: "session-1",
+    kind: "command",
+    command: "npm test",
+    success: true,
+    isTest: true,
+    isVerification: true,
+    location: "local",
+    warningCount: 0,
+    ...overrides,
+  };
+}
+
+describe("starter policy compilation", () => {
+  it("uses clear starter rules with the intended checks", () => {
+    const compiled = compilePolicy({
+      directives: [],
+      sources: [],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.sources).toEqual(["starter policy"]);
+    expect(compiled.rules.map((rule) => rule.directive)).toEqual([
+      "Do not skip project rules",
+      "Treat warnings as errors",
+      "All unit tests must pass",
+      "Keep changes small and focused",
+      "Verify your work",
+      "Run tests locally",
+      "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
+    ]);
+    expect(compiled.rules[5]?.type).toBe("local-testing");
+  });
+
+  it("classifies David's directives into the intended policy types", () => {
+    const compiled = policy();
+    expect(compiled.agents).toEqual(["claude", "cursor", "codex"]);
+    expect(compiled.rules.map((rule) => rule.type)).toEqual([
+      "meta-compliance",
+      "warnings-as-errors",
+      "require-passing-tests",
+      "blast-radius",
+      "verification-evidence",
+      "local-testing",
+      "comment-quality",
+    ]);
+    expect(
+      compiled.rules
+        .filter((rule) => rule.mode === "block")
+        .every((rule) => rule.confirmed),
+    ).toBe(true);
+  });
+
+  it("downgrades inferred hard blocks until explicitly accepted", () => {
+    const compiled = policy(false);
+    const remoteTest = hookEvent("pre-tool", {
+      toolName: "Bash",
+      toolInput: { command: "ssh runner npm test" },
+    });
+    const decision = evaluatePolicy({
+      policy: compiled,
+      event: remoteTest,
+      receipts: [],
+    });
+
+    expect(decision.outcome).toBe("warn");
+    expect(decision.violations[0]?.ruleId).toContain("local-testing");
+  });
+
+  it("keeps ambiguous warning guidance advisory", () => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text: "Ignore warnings from generated code",
+          source: { path: "CLAUDE.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["CLAUDE.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]?.type).toBe("advisory");
+  });
+
+  it("rejects invalid policy regular expressions", () => {
+    const compiled = policy();
+    const testRule = compiled.rules.find(
+      (rule) => rule.type === "require-passing-tests",
+    );
+    if (!testRule || testRule.type !== "require-passing-tests") {
+      throw new Error("test rule missing");
+    }
+    testRule.commandPatterns = ["["];
+
+    expect(() => policySchema.parse(compiled)).toThrow(
+      "must be a valid regular expression",
+    );
+  });
+});
+
+describe("starter policy enforcement", () => {
+  it("blocks a remote test before execution", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("pre-tool", {
+        toolName: "Bash",
+        toolInput: { command: "ssh runner npm test" },
+      }),
+      receipts: [],
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ directive: "Use local machines for testing" }),
+      ]),
+    );
+  });
+
+  it("blocks commandless remote test tools", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("pre-tool", {
+        toolName: "mcp__cloud__run_tests",
+        toolInput: { suite: "unit" },
+      }),
+      receipts: [],
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations[0]?.directive).toBe(
+      "Use local machines for testing",
+    );
+  });
+
+  it("blocks completion when tests fail after an edit", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [edit(), verification({ success: false })],
+      diffStats: { files: 1, added: 4, deleted: 0, complete: true },
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations.map((item) => item.directive)).toContain(
+      "All unit tests must pass",
+    );
+  });
+
+  it("allows completion with fresh, local, warning-free verification", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [edit(), verification()],
+      diffStats: { files: 1, added: 4, deleted: 0, complete: true },
+    });
+
+    expect(decision.outcome).toBe("allow");
+    expect(decision.violations).toEqual([]);
+    expect(decision.summary).toContain("verification passed");
+  });
+
+  it("treats warning output as a violation", () => {
+    const activePolicy = policy();
+    const event = hookEvent("post-tool", {
+      toolName: "Bash",
+      toolInput: { command: "npm test" },
+      toolOutput: "warning: deprecated option\n12 tests passed",
+    });
+    const receipts = deriveReceipts(activePolicy, event);
+    const decision = evaluatePolicy({
+      policy: activePolicy,
+      event,
+      receipts,
+    });
+
+    expect(receipts[0]?.warningCount).toBe(1);
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations[0]?.directive).toBe(
+      "Treat warnings as errors",
+    );
+  });
+
+  it("does not count an explicit zero-warning summary", () => {
+    const activePolicy = policy();
+    const event = hookEvent("post-tool", {
+      toolName: "Bash",
+      toolInput: { command: "npm test" },
+      toolOutput:
+        "12 tests passed, 0 warnings\ninferred rules: warning-only\nTreat warnings as errors",
+    });
+
+    expect(deriveReceipts(activePolicy, event)[0]?.warningCount).toBe(0);
+  });
+
+  it("parses Cursor's JSON-stringified tool output before warning checks", () => {
+    const activePolicy = policy();
+    const clean = hookEvent("post-tool", {
+      agent: "cursor",
+      toolName: "Shell",
+      toolInput: { command: "npm test" },
+      toolOutput: JSON.stringify({
+        exitCode: 0,
+        stdout: "12 tests passed, 0 warnings",
+        stderr: "",
+      }),
+    });
+    const warning = hookEvent("post-tool", {
+      agent: "cursor",
+      toolName: "Shell",
+      toolInput: { command: "npm test" },
+      toolOutput: JSON.stringify({
+        exitCode: 0,
+        stdout: "12 tests passed",
+        stderr: "warning: deprecated API",
+      }),
+    });
+
+    expect(deriveReceipts(activePolicy, clean)[0]?.warningCount).toBe(0);
+    expect(deriveReceipts(activePolicy, warning)[0]?.warningCount).toBe(1);
+  });
+
+  it("recognizes tests nested inside an aggregate verification script", () => {
+    const activePolicy = policy();
+    const event = hookEvent("post-tool", {
+      toolName: "Shell",
+      toolInput: { command: "npm run check" },
+      toolOutput:
+        "typecheck passed\nTest Files 7 passed (7)\nTests 31 passed (31)",
+    });
+
+    expect(deriveReceipts(activePolicy, event)[0]).toMatchObject({
+      success: true,
+      isTest: true,
+      isVerification: true,
+      location: "local",
+    });
+  });
+
+  it("warns when the working diff exceeds the blast-radius threshold", () => {
+    const activePolicy = policy();
+    const blastRule = activePolicy.rules.find(
+      (rule) => rule.type === "blast-radius",
+    );
+    if (!blastRule || blastRule.type !== "blast-radius") {
+      throw new Error("blast-radius rule missing");
+    }
+
+    const decision = evaluatePolicy({
+      policy: activePolicy,
+      event: hookEvent("stop"),
+      receipts: [edit(), verification()],
+      diffStats: {
+        files: blastRule.maxFiles + 1,
+        added: blastRule.maxChangedLines + 1,
+        deleted: 0,
+        complete: true,
+      },
+    });
+
+    expect(decision.outcome).toBe("warn");
+    expect(decision.violations[0]?.directive).toContain("blast radius");
+  });
+
+  it("does not repeat an explained blast-radius warning for an unchanged diff", () => {
+    const activePolicy = policy();
+    const blastRule = activePolicy.rules.find(
+      (rule) => rule.type === "blast-radius",
+    );
+    if (!blastRule || blastRule.type !== "blast-radius") {
+      throw new Error("blast-radius rule missing");
+    }
+    const diffStats = {
+      files: blastRule.maxFiles + 1,
+      added: blastRule.maxChangedLines + 1,
+      deleted: 0,
+      complete: true,
+    };
+    const receipts: Receipt[] = [
+      edit(),
+      verification(),
+      {
+        version: 1,
+        id: "blast-decision",
+        timestamp: "2026-01-01T00:00:03.000Z",
+        sessionId: "session-1",
+        kind: "decision",
+        outcome: "warn",
+        ruleIds: [blastRule.id],
+      },
+    ];
+    const acknowledgement = deriveAcknowledgementReceipts(
+      activePolicy,
+      hookEvent("agent-response", {
+        occurredAt: "2026-01-01T00:00:04.000Z",
+        lastAssistantMessage:
+          "The larger scope is intentional because this is the initial greenfield implementation.",
+      }),
+      receipts,
+      diffStats,
+    );
+
+    expect(acknowledgement).toHaveLength(1);
+    expect(acknowledgement[0]).toMatchObject({
+      kind: "acknowledgement",
+      ruleIds: [blastRule.id],
+      diffFiles: diffStats.files,
+      diffChangedLines: diffStats.added,
+    });
+    const decision = evaluatePolicy({
+      policy: activePolicy,
+      event: hookEvent("stop", {
+        occurredAt: "2026-01-01T00:00:05.000Z",
+      }),
+      receipts: [...receipts, ...acknowledgement],
+      diffStats,
+    });
+    expect(decision.outcome).toBe("allow");
+  });
+
+  it("requires verification newer than the latest edit", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        verification({}, "2026-01-01T00:00:01.000Z"),
+        edit("2026-01-01T00:00:02.000Z"),
+      ],
+      diffStats: { files: 1, added: 4, deleted: 0, complete: true },
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations.map((item) => item.directive)).toContain(
+      "Verify, don't assume",
+    );
+  });
+
+  it("requires tests when the working diff changed outside an edit tool", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [],
+      diffStats: { files: 1, added: 2, deleted: 0, complete: true },
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations.map((item) => item.directive)).toContain(
+      "All unit tests must pass",
+    );
+  });
+
+  it("rejects a failed verification that follows a passing test", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        edit(),
+        verification({}, "2026-01-01T00:00:02.000Z"),
+        verification(
+          {
+            id: "failed-lint",
+            command: "npm run lint",
+            success: false,
+            isTest: false,
+            isVerification: true,
+          },
+          "2026-01-01T00:00:03.000Z",
+        ),
+      ],
+      diffStats: { files: 1, added: 4, deleted: 0, complete: true },
+    });
+
+    expect(decision.outcome).toBe("warn");
+    expect(decision.violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          directive: "Verify, don't assume",
+          evidence: "The latest check failed.",
+        }),
+      ]),
+    );
+  });
+
+  it("ignores warning text from non-verification commands", () => {
+    const activePolicy = policy();
+    const event = hookEvent("post-tool", {
+      toolName: "Bash",
+      toolInput: { command: "git log --grep warning" },
+      toolOutput: "warning cleanup commit",
+    });
+    const receipts = deriveReceipts(activePolicy, event);
+    const decision = evaluatePolicy({
+      policy: activePolicy,
+      event,
+      receipts,
+    });
+
+    expect(receipts[0]?.warningCount).toBe(0);
+    expect(receipts[0]?.isVerification).toBe(false);
+    expect(decision.outcome).toBe("allow");
+  });
+
+  it("does not store raw commands or classify arbitrary MCP writes as edits", () => {
+    const activePolicy = policy();
+    const commandEvent = hookEvent("post-tool", {
+      toolName: "Bash",
+      toolInput: {
+        command:
+          "API_TOKEN=secret npm test -- --header 'Authorization: Bearer hidden'",
+      },
+      toolOutput: "12 tests passed",
+    });
+    const commandReceipts = deriveReceipts(activePolicy, commandEvent);
+    expect(commandReceipts[0]?.command).toBeUndefined();
+    expect(commandReceipts[0]?.commandFingerprint).toMatch(/^sha256:/);
+    expect(JSON.stringify(commandReceipts)).not.toContain("secret");
+    expect(JSON.stringify(commandReceipts)).not.toContain("hidden");
+
+    const mcpWrite = deriveReceipts(
+      activePolicy,
+      hookEvent("post-tool", {
+        toolName: "mcp__slack__write_message",
+        toolInput: { channel: "dev", text: "hello" },
+        toolOutput: "ok",
+      }),
+    );
+    expect(mcpWrite).toEqual([]);
+  });
+
+  it("flags comments that leak transient agent context", () => {
+    const activePolicy = policy();
+    const event = hookEvent("post-tool", {
+      toolName: "Edit",
+      toolInput: {
+        file_path: "src/example.ts",
+        new_string:
+          "// Per the AGENTS.md instructions and APP-421, keep this workaround.",
+      },
+      toolOutput: "updated",
+    });
+    const receipts = deriveReceipts(activePolicy, event);
+    const decision = evaluatePolicy({
+      policy: activePolicy,
+      event,
+      receipts,
+    });
+
+    expect(decision.outcome).toBe("warn");
+    expect(decision.violations).toEqual([
+      expect.objectContaining({
+        directive: expect.stringContaining("Do not add comments"),
+        evidence: expect.stringContaining("1 new code comment"),
+      }),
+    ]);
+    expect(JSON.stringify(receipts)).not.toContain("APP-421");
+    expect(JSON.stringify(receipts)).not.toContain("AGENTS.md");
+  });
+
+  it("allows durable comments and ignores documentation files", () => {
+    const activePolicy = policy();
+    const durable = hookEvent("post-tool", {
+      toolName: "Edit",
+      toolInput: {
+        file_path: "src/example.ts",
+        new_string:
+          "// Retries are capped to avoid saturating the upstream connection pool.",
+      },
+    });
+    const documentation = hookEvent("post-tool", {
+      toolName: "Edit",
+      toolInput: {
+        file_path: "README.md",
+        new_string: "# Agent instructions",
+      },
+    });
+
+    expect(
+      evaluatePolicy({
+        policy: activePolicy,
+        event: durable,
+        receipts: deriveReceipts(activePolicy, durable),
+      }).outcome,
+    ).toBe("allow");
+    expect(
+      evaluatePolicy({
+        policy: activePolicy,
+        event: documentation,
+        receipts: deriveReceipts(activePolicy, documentation),
+      }).outcome,
+    ).toBe("allow");
+  });
+});

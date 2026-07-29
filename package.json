@@ -1,0 +1,46 @@
+{
+  "name": "codecut",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Check coding agents against project rules and explain failures",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "build:binary": "bash scripts/build-release.sh",
+    "check": "pnpm typecheck && pnpm test && pnpm build",
+    "dev": "tsx src/cli.ts",
+    "smoke": "pnpm build && node scripts/smoke-test.mjs",
+    "smoke:codex": "pnpm build && node scripts/codex-smoke-test.mjs",
+    "smoke:cursor": "pnpm build && node scripts/cursor-smoke-test.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "cursor",
+    "hooks",
+    "policy-as-code"
+  ],
+  "author": "",
+  "license": "FSL-1.1-MIT",
+  "packageManager": "pnpm@10.34.3",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

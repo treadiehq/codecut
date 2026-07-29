@@ -1,0 +1,51 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CODECUT_ROOT=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent claude",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|apply_patch|mcp__.*"
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CODECUT_ROOT=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent claude",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|apply_patch|mcp__.*"
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CODECUT_ROOT=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent claude",
+            "timeout": 5
+          }
+        ],
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|apply_patch|mcp__.*"
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "CODECUT_ROOT=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; \"$CODECUT_ROOT/.codecut/runtime/codecut\" hook --agent claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

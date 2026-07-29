@@ -1,0 +1,143 @@
+name: Release
+
+# Push a vX.Y.Z tag whose version matches package.json. This workflow builds
+# standalone binaries and publishes them as GitHub Release assets.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify release
+        run: |
+          node -e 'const p=require("./package.json"); const tag=process.env.GITHUB_REF_NAME.replace(/^v/,""); if (p.version !== tag) throw new Error(`package ${p.version} does not match tag ${tag}`)'
+          pnpm check
+          pnpm smoke
+          pnpm smoke:cursor
+
+  build:
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: bun-linux-x64
+            artifact: codecut-linux-x64
+          - os: ubuntu-24.04-arm
+            target: bun-linux-arm64
+            artifact: codecut-linux-arm64
+          - os: macos-latest
+            target: bun-darwin-x64
+            artifact: codecut-darwin-x64
+          - os: macos-latest
+            target: bun-darwin-arm64
+            artifact: codecut-darwin-arm64
+          - os: windows-latest
+            target: bun-windows-x64
+            artifact: codecut-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build binary
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if echo "${{ matrix.target }}" | grep -q darwin; then
+            export BUN_NO_CODESIGN_MACHO_BINARY=1
+          fi
+          bun build src/cli.ts \
+            --compile \
+            --target=${{ matrix.target }} \
+            --outfile=${{ matrix.artifact }} \
+            --define __CODECUT_VERSION__="\"$VERSION\""
+
+      - name: Ad-hoc sign macOS binary
+        if: contains(matrix.target, 'darwin')
+        run: |
+          codesign --force --sign - "${{ matrix.artifact }}"
+          codesign --verify --strict "${{ matrix.artifact }}"
+
+      - name: Smoke test binary
+        shell: bash
+        run: |
+          chmod +x "${{ matrix.artifact }}"
+          M="$(uname -m)"
+          case "${{ matrix.target }}" in
+            *x64) WANT="x86_64|amd64" ;;
+            *arm64) WANT="arm64|aarch64" ;;
+          esac
+          if echo "$M" | grep -Eq "$WANT"; then
+            OUT="$(./${{ matrix.artifact }} --version)"
+            test "$OUT" = "${GITHUB_REF_NAME#v}" || { echo "version mismatch: $OUT"; exit 1; }
+          else
+            file "${{ matrix.artifact }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Collect release files
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec mv {} release/ \;
+          (cd release && for f in *; do sha256sum "$f" >> SHA256SUMS; done)
+
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: release/codecut-*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
