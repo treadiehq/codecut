@@ -30,9 +30,6 @@ Windows PowerShell:
 irm https://raw.githubusercontent.com/treadiehq/codecut/main/scripts/install.ps1 | iex
 ```
 
-The installers and `codecut update` verify the downloaded binary against the
-release's published SHA-256 checksum before executing or replacing anything.
-
 ## Get started
 
 Run one of these commands inside your project:
