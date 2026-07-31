@@ -6,6 +6,7 @@ import { Command } from "commander";
 import packageJson from "../package.json" with { type: "json" };
 import { runHook } from "./commands/hook.js";
 import { initializeProject } from "./commands/init.js";
+import { formatLint, runLintCommand } from "./commands/lint.js";
 import { formatStatus, getStatus } from "./commands/status.js";
 import { formatPolicyTests, testPolicy } from "./commands/test.js";
 import { compareVersions, updateCodecut } from "./commands/update.js";
@@ -99,6 +100,7 @@ Examples:
   codecut update
   codecut status --json
   codecut test --json
+  codecut lint --base origin/main
 `,
   );
 
@@ -247,6 +249,59 @@ Examples:
       process.exitCode = 1;
     }
   });
+
+program
+  .command("lint")
+  .description(
+    "Scan a diff for heuristic issues; needs no hooks, setup, or policy",
+  )
+  .option("--cwd <directory>", "project directory", process.cwd())
+  .option("--base <ref>", "compare HEAD against the merge base with <ref>")
+  .option("--staged", "scan staged changes only", false)
+  .option("--pr <number>", "scan a GitHub pull request (requires gh)")
+  .option("--patch <file>", "scan a unified diff file; use - for stdin")
+  .option(
+    "--checks <names>",
+    "comma-separated checks: comment-quality, todo-comments, debug-artifacts, blast-radius",
+  )
+  .option("--format <format>", "output format: text, json, github, or sarif", "text")
+  .option("--exit-zero", "exit 0 even when issues are found", false)
+  .addHelpText(
+    "after",
+    `
+Examples:
+  codecut lint                       uncommitted changes
+  codecut lint --staged              staged changes
+  codecut lint --base origin/main    a pull request branch
+  codecut lint --pr 123              a GitHub pull request
+  git diff main...HEAD | codecut lint --patch -
+`,
+  )
+  .action(
+    async (options: {
+      cwd: string;
+      base?: string;
+      staged: boolean;
+      pr?: string;
+      patch?: string;
+      checks?: string;
+      format: string;
+      exitZero: boolean;
+    }) => {
+      const result = await runLintCommand({
+        cwd: options.cwd,
+        base: options.base,
+        staged: options.staged,
+        pr: options.pr,
+        patch: options.patch,
+        checks: options.checks,
+      });
+      process.stdout.write(`${formatLint(result, options.format, VERSION)}\n`);
+      if (result.findings.length > 0 && !options.exitZero) {
+        process.exitCode = 1;
+      }
+    },
+  );
 
 program
   .command("update")

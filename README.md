@@ -77,6 +77,23 @@ codecut test    # Check that the rules work
 codecut update  # Install the latest release and refresh project hooks
 ```
 
+## Lint a diff or pull request
+
+`codecut lint` runs only the heuristic, diff-based checks. It needs no hooks,
+no setup, and no policy file, so you can try it on any repository or pull
+request and judge the feedback for yourself:
+
+```sh
+codecut lint                       # uncommitted changes
+codecut lint --staged              # staged changes
+codecut lint --base origin/main    # a pull request branch
+codecut lint --pr 123              # a GitHub pull request (requires gh)
+git diff main...HEAD | codecut lint --patch -
+```
+
+When a `.codecut/policy.json` exists, `codecut lint` reuses its comment
+patterns and blast-radius limits so lint results match hook enforcement.
+
 ## Development
 
 ```sh

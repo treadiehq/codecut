@@ -56,6 +56,26 @@ export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
   String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent|I\s+(?:added|changed|implemented))\b`,
 ];
 
+export const DEFAULT_DEBUG_ARTIFACT_PATTERNS = [
+  String.raw`\bconsole\.(?:log|debug|trace)\s*\(`,
+  String.raw`\bdebugger\s*;?\s*$`,
+  String.raw`\bpdb\.set_trace\s*\(`,
+  String.raw`\bbreakpoint\s*\(\s*\)`,
+  String.raw`\bbinding\.pry\b`,
+  String.raw`\bbyebug\b`,
+  String.raw`\bvar_dump\s*\(`,
+];
+
+export const DEFAULT_TODO_PATTERNS = [
+  String.raw`\b(?:TODO|FIXME|HACK|XXX)\b`,
+];
+
+export const DEFAULT_TEST_FILE_PATTERNS = [
+  String.raw`(?:^|/)(?:tests?|__tests__|specs?)/`,
+  String.raw`\.(?:test|spec)\.[cm]?[jt]sx?$`,
+  String.raw`_test\.(?:go|py|rb|ts|js)$`,
+];
+
 export function matchesAny(value: string, patterns: string[]): boolean {
   return patterns.some((pattern) => {
     try {

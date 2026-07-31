@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { scanComments } from "./comments.js";
 import {
   countWarningLines,
   matchesAny,
@@ -124,47 +125,11 @@ export function extractAddedComments(event: NormalizedHookEvent): string[] {
     return [];
   }
 
-  const comments: string[] = [];
-  let inBlockComment = false;
-  for (const line of addedText(event).split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0 || trimmed.startsWith("#!")) {
-      continue;
-    }
-
-    if (inBlockComment) {
-      const content = trimmed
-        .replace(/^\*\s?/, "")
-        .replace(/\*\/.*$/, "")
-        .trim();
-      if (content) {
-        comments.push(content);
-      }
-      if (trimmed.includes("*/")) {
-        inBlockComment = false;
-      }
-      continue;
-    }
-
-    const blockStart = trimmed.indexOf("/*");
-    if (blockStart >= 0) {
-      const afterStart = trimmed.slice(blockStart + 2);
-      const closes = afterStart.includes("*/");
-      const content = afterStart.replace(/\*\/.*$/, "").trim();
-      if (content) {
-        comments.push(content);
-      }
-      inBlockComment = !closes;
-      continue;
-    }
-
-    const standalone = trimmed.match(/^(?:(?:\/\/+|#|--|;)\s?)(.+)$/);
-    if (standalone?.[1]) {
-      comments.push(standalone[1].trim());
-    }
-  }
-
-  return comments;
+  return scanComments(
+    addedText(event)
+      .split(/\r?\n/)
+      .map((text, index) => ({ line: index + 1, text })),
+  ).map((comment) => comment.text);
 }
 
 function estimatedChangedLines(event: NormalizedHookEvent): number | undefined {
