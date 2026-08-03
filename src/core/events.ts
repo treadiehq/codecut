@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { scanComments } from "./comments.js";
+import { groupCommentBlocks, scanComments } from "./comments.js";
 import {
   countWarningLines,
   matchesAny,
@@ -130,6 +130,22 @@ export function extractAddedComments(event: NormalizedHookEvent): string[] {
       .split(/\r?\n/)
       .map((text, index) => ({ line: index + 1, text })),
   ).map((comment) => comment.text);
+}
+
+export function extractAddedCommentBlocks(
+  event: NormalizedHookEvent,
+): string[][] {
+  if (!isEditTool(event.toolName)) {
+    return [];
+  }
+
+  return groupCommentBlocks(
+    scanComments(
+      addedText(event)
+        .split(/\r?\n/)
+        .map((text, index) => ({ line: index + 1, text })),
+    ),
+  ).map((block) => block.map((comment) => comment.text));
 }
 
 function estimatedChangedLines(event: NormalizedHookEvent): number | undefined {

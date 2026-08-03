@@ -1,4 +1,5 @@
 import {
+  extractAddedCommentBlocks,
   extractAddedComments,
   extractCommand,
   extractEditedPaths,
@@ -125,6 +126,7 @@ function evaluatePostTool(
   }
 
   const comments = extractAddedComments(event);
+  const commentBlocks = extractAddedCommentBlocks(event);
   const editedPaths = extractEditedPaths(event);
   for (const rule of policy.rules) {
     if (
@@ -140,14 +142,27 @@ function evaluatePostTool(
     const matches = comments.filter((comment) =>
       matchesAny(comment, rule.bannedPatterns),
     );
-    if (matches.length > 0) {
-      violations.push(
-        violation(
-          rule,
-          `${countLabel(matches.length, "new code comment")} mentions temporary agent context.`,
-          "Remove it or explain only a lasting code constraint. Do not mention prompts, instructions, tickets, or temporary files.",
-        ),
-      );
+    const lineLimit = rule.maxCommentLines;
+    const longBlocks =
+      lineLimit === undefined
+        ? []
+        : commentBlocks.filter((block) => block.length > lineLimit);
+    if (matches.length > 0 || longBlocks.length > 0) {
+      const evidence = [
+        matches.length > 0
+          ? `${countLabel(matches.length, "new code comment")} mentions temporary agent context.`
+          : "",
+        longBlocks.length > 0 && lineLimit !== undefined
+          ? `${countLabel(longBlocks.length, "new code comment")} runs longer than ${countLabel(lineLimit, "line")}.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const recovery =
+        matches.length > 0
+          ? "Remove it or explain only a lasting code constraint. Do not mention prompts, instructions, tickets, or temporary files."
+          : `Shorten the comment to at most ${countLabel(lineLimit ?? 1, "line")} or keep only a lasting code constraint.`;
+      violations.push(violation(rule, evidence, recovery));
     }
   }
 

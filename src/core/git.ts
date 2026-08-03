@@ -53,6 +53,12 @@ function parseNumstat(output: string): {
   return { paths, added, deleted, complete };
 }
 
+export async function findGitRoot(cwd: string): Promise<string | undefined> {
+  const output = await git(cwd, ["rev-parse", "--show-toplevel"]);
+  const root = output?.trim();
+  return root && root.length > 0 ? root : undefined;
+}
+
 export async function inspectDiff(
   cwd: string,
   receipts: Receipt[],

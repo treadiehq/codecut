@@ -7,9 +7,17 @@ import packageJson from "../package.json" with { type: "json" };
 import { runHook } from "./commands/hook.js";
 import { initializeProject } from "./commands/init.js";
 import { formatLint, runLintCommand } from "./commands/lint.js";
-import { formatStatus, getStatus } from "./commands/status.js";
+import os from "node:os";
+import {
+  formatStatus,
+  getStatus,
+  inspectHookSettings,
+} from "./commands/status.js";
 import { formatPolicyTests, testPolicy } from "./commands/test.js";
 import { compareVersions, updateCodecut } from "./commands/update.js";
+import { setupUserRules } from "./commands/user.js";
+import { displayPath } from "./core/user.js";
+import { installUserHooks } from "./install/user.js";
 import { agentNameSchema, type AgentName } from "./core/schema.js";
 
 declare const __CODECUT_VERSION__: string | undefined;
@@ -40,12 +48,74 @@ function agent(value: string): AgentName {
   return parsed.data;
 }
 
-async function setup(options: {
-  agent: string;
-  cwd: string;
-  accept: boolean;
-  refreshPolicy: boolean;
-}): Promise<void> {
+async function setupUser(
+  options: {
+    accept: boolean;
+    refreshPolicy: boolean;
+  },
+  hookAgent?: AgentName,
+): Promise<void> {
+  const result = await setupUserRules({
+    accept: options.accept,
+    refresh: options.refreshPolicy,
+  });
+
+  let hooksLine: string | undefined;
+  if (hookAgent) {
+    const hooks = await installUserHooks(
+      hookAgent as Exclude<AgentName, "unknown">,
+    );
+    const health = await inspectHookSettings(os.homedir(), hookAgent);
+    if (health.missingHookEvents.length > 0) {
+      throw new Error(
+        `User-level ${hookAgent} hooks are incomplete after install; missing: ${health.missingHookEvents.join(", ")}. Check ${displayPath(hooks.settingsPath)}.`,
+      );
+    }
+    hooksLine = `hooks (${hookAgent}): installed at ${displayPath(hooks.settingsPath)} (${health.installedHookEvents.length} events)`;
+  }
+
+  process.stdout.write(
+    [
+      "Codecut user rules are ready.",
+      `rules file: ${displayPath(result.rulesPath)}${
+        result.rulesFileCreated ? " (created)" : ""
+      }`,
+      `policy: ${result.policyCreated ? "compiled" : "preserved"} (${result.ruleCount} rules)`,
+      ...(hooksLine ? [hooksLine] : []),
+      "scope: merged into every project policy when hooks run; project rules win on overlap",
+      ...(result.rulesFileCreated || result.ruleCount === 0
+        ? [
+            `next: add rules to ${displayPath(result.rulesPath)}, then rerun codecut setup --user --refresh-policy`,
+          ]
+        : []),
+      ...(result.ruleCount > 0
+        ? [
+            result.blockingRulesConfirmed
+              ? "blocking rules: active"
+              : "blocking rules: warnings only; review them, then rerun with --refresh-policy --accept",
+          ]
+        : []),
+    ].join("\n") + "\n",
+  );
+}
+
+async function setup(
+  options: {
+    agent: string;
+    cwd: string;
+    accept: boolean;
+    refreshPolicy: boolean;
+    user: boolean;
+  },
+  agentExplicitlyGiven: boolean,
+): Promise<void> {
+  if (options.user) {
+    await setupUser(
+      options,
+      agentExplicitlyGiven ? agent(options.agent) : undefined,
+    );
+    return;
+  }
   const targetAgent = agent(options.agent);
   const result = await initializeProject({
     cwd: options.cwd,
@@ -119,6 +189,11 @@ program
     "rebuild the policy from current instruction files",
     false,
   )
+  .option(
+    "--user",
+    "compile user-level rules that apply to every project; add --agent to also install user-level hooks",
+    false,
+  )
   .addHelpText(
     "after",
     `
@@ -128,9 +203,13 @@ Examples:
   codecut setup --agent codex
   codecut setup --agent polytoken
   codecut setup --agent claude --accept
+  codecut setup --user
+  codecut setup --user --agent cursor
 `,
   )
-  .action(setup);
+  .action(async (options, command) => {
+    await setup(options, command.getOptionValueSource("agent") !== "default");
+  });
 
 program
   .command("init")
@@ -371,6 +450,11 @@ program
   .command("hook")
   .description("Read one agent hook event from stdin")
   .option("--agent <agent>", "agent sending the event", "claude")
+  .option(
+    "--user",
+    "run as a user-level hook; defers to project hooks when present",
+    false,
+  )
   .addHelpText(
     "after",
     `
@@ -379,8 +463,8 @@ Example:
     codecut hook --agent claude
 `,
   )
-  .action(async (options: { agent: string }) => {
-    await runHook(agent(options.agent));
+  .action(async (options: { agent: string; user: boolean }) => {
+    await runHook(agent(options.agent), { userLevel: options.user });
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

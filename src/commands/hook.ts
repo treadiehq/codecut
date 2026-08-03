@@ -1,5 +1,3 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import process from "node:process";
 import {
   formatClaudeOutput,
@@ -25,10 +23,17 @@ import {
   deriveAcknowledgementReceipts,
   deriveReceipts,
 } from "../core/events.js";
-import { inspectDiff } from "../core/git.js";
-import { findProjectRoot, loadPolicy } from "../core/project.js";
-import type { AgentName } from "../core/schema.js";
+import { findGitRoot, inspectDiff } from "../core/git.js";
+import { eventsPath, findProjectRoot } from "../core/project.js";
+import type { AgentName, Policy } from "../core/schema.js";
+import {
+  loadEffectivePolicy,
+  loadUserPolicy,
+  userConfigDirectory,
+  userEventsPath,
+} from "../core/user.js";
 import { appendReceipts, readSessionReceipts } from "../core/store.js";
+import { hasProjectHooks } from "../install/user.js";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -38,19 +43,10 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function hasNativeCursorHooks(projectRoot: string): Promise<boolean> {
-  try {
-    const hooks = await readFile(
-      path.join(projectRoot, ".cursor", "hooks.json"),
-      "utf8",
-    );
-    return hooks.includes("codecut") && hooks.includes("hook --agent cursor");
-  } catch {
-    return false;
-  }
-}
-
-export async function runHook(agent: AgentName): Promise<void> {
+export async function runHook(
+  agent: AgentName,
+  options: { userLevel?: boolean } = {},
+): Promise<void> {
   let nativeEventName =
     agent === "polytoken" ? process.env.POLYTOKEN_HOOK_EVENT : undefined;
   try {
@@ -73,37 +69,60 @@ export async function runHook(agent: AgentName): Promise<void> {
           : agent === "polytoken"
             ? normalizePolytokenEvent(parsedInput)
           : normalizeClaudeEvent(parsedInput, agent);
-    const projectRoot = await findProjectRoot(event.cwd);
-    if (!projectRoot) {
+    const proceed = (): void => {
       process.stdout.write(
         `${JSON.stringify(
           agent === "polytoken" ? polytokenProceedOutput(nativeEventName) : {},
         )}\n`,
       );
-      return;
-    }
-    const cursorCompatibilityEvent =
-      agent === "claude" &&
-      parsedInput &&
-      typeof parsedInput === "object" &&
-      !Array.isArray(parsedInput) &&
-      typeof (parsedInput as Record<string, unknown>).cursor_version ===
-        "string";
-    if (
-      cursorCompatibilityEvent &&
-      (await hasNativeCursorHooks(projectRoot))
-    ) {
-      process.stdout.write("{}\n");
-      return;
+    };
+
+    const projectRoot = await findProjectRoot(event.cwd);
+    let policy: Policy;
+    let diffRoot: string;
+    let eventsFile: string;
+
+    if (projectRoot) {
+      if (options.userLevel && (await hasProjectHooks(projectRoot, agent))) {
+        // The project's own hooks enforce here; a user-level hook running
+        // too would double every check and receipt.
+        proceed();
+        return;
+      }
+      const cursorCompatibilityEvent =
+        agent === "claude" &&
+        parsedInput &&
+        typeof parsedInput === "object" &&
+        !Array.isArray(parsedInput) &&
+        typeof (parsedInput as Record<string, unknown>).cursor_version ===
+          "string";
+      if (
+        cursorCompatibilityEvent &&
+        (await hasProjectHooks(projectRoot, "cursor"))
+      ) {
+        process.stdout.write("{}\n");
+        return;
+      }
+      policy = await loadEffectivePolicy(projectRoot);
+      diffRoot = projectRoot;
+      eventsFile = eventsPath(projectRoot);
+    } else {
+      const userPolicy = await loadUserPolicy(userConfigDirectory());
+      if (!userPolicy || userPolicy.rules.length === 0) {
+        proceed();
+        return;
+      }
+      policy = userPolicy;
+      diffRoot = (await findGitRoot(event.cwd)) ?? event.cwd;
+      eventsFile = userEventsPath(diffRoot);
     }
 
-    const policy = await loadPolicy(projectRoot);
     const newReceipts = deriveReceipts(policy, event);
-    await appendReceipts(projectRoot, newReceipts);
-    let receipts = await readSessionReceipts(projectRoot, event.sessionId);
+    await appendReceipts(eventsFile, newReceipts);
+    let receipts = await readSessionReceipts(eventsFile, event.sessionId);
     const diffStats =
       event.stage === "stop" || event.stage === "agent-response"
-        ? await inspectDiff(projectRoot, receipts)
+        ? await inspectDiff(diffRoot, receipts)
         : undefined;
     const acknowledgements = deriveAcknowledgementReceipts(
       policy,
@@ -111,7 +130,7 @@ export async function runHook(agent: AgentName): Promise<void> {
       receipts,
       diffStats,
     );
-    await appendReceipts(projectRoot, acknowledgements);
+    await appendReceipts(eventsFile, acknowledgements);
     receipts = [...receipts, ...acknowledgements];
     if (event.stage === "agent-response") {
       process.stdout.write(
@@ -139,7 +158,7 @@ export async function runHook(agent: AgentName): Promise<void> {
           JSON.stringify([...(receipt.ruleIds ?? [])].sort()) ===
             JSON.stringify(decisionRuleIds),
       );
-    await appendReceipts(projectRoot, [decisionReceipt(event, decision)]);
+    await appendReceipts(eventsFile, [decisionReceipt(event, decision)]);
 
     const outputEvent =
       agent === "polytoken" && warningAlreadySent

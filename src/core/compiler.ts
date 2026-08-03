@@ -75,6 +75,28 @@ function ruleId(type: PolicyRule["type"], directive: string): string {
   return `${type}-${digest}`;
 }
 
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+};
+
+function parseCommentLineLimit(normalized: string): number | undefined {
+  const explicit = normalized.match(
+    /\b(?:longer|more)\s+than\s+(one|two|three|four|five|\d+)\s+lines?\b/,
+  );
+  if (explicit?.[1]) {
+    const limit = NUMBER_WORDS[explicit[1]] ?? Number.parseInt(explicit[1], 10);
+    return Number.isInteger(limit) && limit > 0 ? limit : undefined;
+  }
+  if (/\bmulti[\s-]?line\s+comments?\b/.test(normalized)) {
+    return 1;
+  }
+  return undefined;
+}
+
 function classifyDirective(
   directive: Directive,
   acceptBlockingRules: boolean,
@@ -164,6 +186,7 @@ function classifyDirective(
   }
 
   if (/\bcomments?\b/.test(normalized)) {
+    const maxCommentLines = parseCommentLineLimit(normalized);
     return {
       id: ruleId("comment-quality", directive.text),
       type: "comment-quality",
@@ -174,6 +197,7 @@ function classifyDirective(
       enabled: true,
       filePatterns: DEFAULT_CODE_FILE_PATTERNS,
       bannedPatterns: DEFAULT_COMMENT_CONTEXT_PATTERNS,
+      ...(maxCommentLines === undefined ? {} : { maxCommentLines }),
     };
   }
 
@@ -194,9 +218,12 @@ export function compilePolicy(options: {
   agent: AgentName;
   acceptBlockingRules: boolean;
   now?: Date;
+  fallbackToStarterPolicy?: boolean;
 }): Policy {
   const now = (options.now ?? new Date()).toISOString();
-  const usingStarterPolicy = options.directives.length === 0;
+  const usingStarterPolicy =
+    options.directives.length === 0 &&
+    (options.fallbackToStarterPolicy ?? true);
   const directives = usingStarterPolicy
     ? STARTER_DIRECTIVES
     : options.directives;
@@ -210,7 +237,9 @@ export function compilePolicy(options: {
     sources:
       options.sources.length > 0
         ? options.sources
-        : ["starter policy"],
+        : usingStarterPolicy
+          ? ["starter policy"]
+          : [],
     rules: directives.map((directive) =>
       classifyDirective(
         directive,

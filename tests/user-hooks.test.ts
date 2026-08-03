@@ -1,0 +1,130 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { userEventsPath, userStateDirectory } from "../src/core/user.js";
+import {
+  hasProjectHooks,
+  installUserHooks,
+  userHookCommand,
+} from "../src/install/user.js";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+async function temporaryDirectory(prefix: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
+  temporaryDirectories.push(directory);
+  return directory;
+}
+
+describe("user hook command", () => {
+  it("resolves the global binary and passes the user flag", () => {
+    const command = userHookCommand("cursor");
+    expect(command).toContain("command -v codecut");
+    expect(command).toContain("hook --agent cursor --user");
+    expect(command).not.toContain(".codecut/runtime");
+  });
+});
+
+describe("user-level hook install", () => {
+  it("writes cursor hooks into the home directory with the user command", async () => {
+    const home = await temporaryDirectory(".codecut-home-");
+
+    const result = await installUserHooks("cursor", home);
+
+    expect(result.settingsPath).toBe(
+      path.join(home, ".cursor", "hooks.json"),
+    );
+    const settings = JSON.parse(
+      await readFile(result.settingsPath, "utf8"),
+    ) as { hooks: Record<string, Array<{ command: string }>> };
+    expect(Object.keys(settings.hooks)).toEqual([
+      "preToolUse",
+      "postToolUse",
+      "postToolUseFailure",
+      "afterAgentResponse",
+      "stop",
+    ]);
+    for (const definitions of Object.values(settings.hooks)) {
+      expect(definitions).toHaveLength(1);
+      expect(definitions[0]?.command).toContain(
+        "hook --agent cursor --user",
+      );
+    }
+  });
+
+  it("is idempotent and preserves unrelated hooks", async () => {
+    const home = await temporaryDirectory(".codecut-home-");
+    await mkdir(path.join(home, ".claude"), { recursive: true });
+    await writeFile(
+      path.join(home, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "my-tool" }] }] },
+      }),
+      "utf8",
+    );
+
+    const first = await installUserHooks("claude", home);
+    const second = await installUserHooks("claude", home);
+
+    expect(first.addedEvents.length).toBeGreaterThan(0);
+    expect(second.addedEvents).toEqual([]);
+    const settings = JSON.parse(
+      await readFile(first.settingsPath, "utf8"),
+    ) as { hooks: { Stop: unknown[] } };
+    expect(JSON.stringify(settings.hooks.Stop)).toContain("my-tool");
+    expect(JSON.stringify(settings.hooks.Stop)).toContain(
+      "hook --agent claude --user",
+    );
+  });
+});
+
+describe("project hook detection", () => {
+  it("detects installed project hooks per agent", async () => {
+    const projectRoot = await temporaryDirectory(".codecut-project-");
+    await mkdir(path.join(projectRoot, ".cursor"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, ".cursor", "hooks.json"),
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          stop: [{ command: '"$CODECUT_ROOT/.codecut/runtime/codecut" hook --agent cursor' }],
+        },
+      }),
+      "utf8",
+    );
+
+    expect(await hasProjectHooks(projectRoot, "cursor")).toBe(true);
+    expect(await hasProjectHooks(projectRoot, "claude")).toBe(false);
+    expect(await hasProjectHooks(projectRoot, "unknown")).toBe(false);
+  });
+});
+
+describe("user state paths", () => {
+  it("prefers XDG_STATE_HOME and hashes the state root", () => {
+    const stateDirectory = userStateDirectory({ XDG_STATE_HOME: "/tmp/state" });
+    expect(stateDirectory).toBe(path.join("/tmp/state", "codecut"));
+
+    const first = userEventsPath("/repos/a", stateDirectory);
+    const second = userEventsPath("/repos/a", stateDirectory);
+    const other = userEventsPath("/repos/b", stateDirectory);
+    expect(first).toBe(second);
+    expect(first).not.toBe(other);
+    expect(first.startsWith(stateDirectory)).toBe(true);
+    expect(first.endsWith(".jsonl")).toBe(true);
+  });
+
+  it("falls back to ~/.local/state when XDG_STATE_HOME is unset", () => {
+    expect(userStateDirectory({})).toContain(
+      path.join(".local", "state", "codecut"),
+    );
+  });
+});

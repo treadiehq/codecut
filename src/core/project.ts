@@ -63,8 +63,7 @@ export async function findProjectRoot(startDirectory: string): Promise<string | 
   }
 }
 
-export async function loadPolicy(projectRoot: string): Promise<Policy> {
-  const raw = await readFile(policyPath(projectRoot), "utf8");
+export function parsePolicyDocument(raw: string): Policy {
   const policy = policySchema.parse(JSON.parse(raw));
   return {
     ...policy,
@@ -74,6 +73,22 @@ export async function loadPolicy(projectRoot: string): Promise<Policy> {
         : rule,
     ),
   };
+}
+
+export async function loadPolicy(projectRoot: string): Promise<Policy> {
+  return parsePolicyDocument(await readFile(policyPath(projectRoot), "utf8"));
+}
+
+export async function writePolicyDocument(
+  destination: string,
+  policy: Policy,
+): Promise<void> {
+  const validatedPolicy = policySchema.parse(policy);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await writeFile(destination, `${JSON.stringify(validatedPolicy, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o644,
+  });
 }
 
 export async function writePolicy(
@@ -88,12 +103,7 @@ export async function writePolicy(
     );
   }
 
-  const validatedPolicy = policySchema.parse(policy);
-  await mkdir(path.dirname(destination), { recursive: true });
-  await writeFile(destination, `${JSON.stringify(validatedPolicy, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o644,
-  });
+  await writePolicyDocument(destination, policy);
 }
 
 export async function ensureLocalLogIgnored(projectRoot: string): Promise<void> {

@@ -84,6 +84,7 @@ const commentQualityRuleSchema = z.object({
   type: z.literal("comment-quality"),
   filePatterns: z.array(regexPatternSchema).min(1),
   bannedPatterns: z.array(regexPatternSchema).min(1),
+  maxCommentLines: z.number().int().positive().optional(),
 });
 
 const metaComplianceRuleSchema = z.object({

@@ -30,21 +30,27 @@ function includesCodecutHook(value: unknown): boolean {
   );
 }
 
-function hookDefinition(event: PolytokenHookEvent): JsonObject {
+function hookDefinition(
+  event: PolytokenHookEvent,
+  command: string,
+): JsonObject {
   return {
     name: `codecut-${event.replaceAll("_", "-")}`,
     event,
-    handler: { bash: POLYTOKEN_HOOK_COMMAND },
+    handler: { bash: command },
   };
 }
 
-export function mergePolytokenHooks(input: unknown[]): {
+export function mergePolytokenHooks(
+  input: unknown[],
+  command: string = POLYTOKEN_HOOK_COMMAND,
+): {
   settings: unknown[];
   changedEvents: PolytokenHookEvent[];
 } {
   const existingCodecut = input.filter(includesCodecutHook);
   const unrelated = input.filter((entry) => !includesCodecutHook(entry));
-  const desired = EVENTS.map(hookDefinition);
+  const desired = EVENTS.map((event) => hookDefinition(event, command));
   const changedEvents = EVENTS.filter((event, index) => {
     const matches = existingCodecut.filter(
       (entry) => isObject(entry) && entry.event === event,
@@ -91,17 +97,23 @@ export async function validatePolytokenSettings(
   }
 }
 
-export async function installPolytokenHooks(projectRoot: string): Promise<{
+export async function installPolytokenHooks(
+  rootDirectory: string,
+  options: { command?: string } = {},
+): Promise<{
   settingsPath: string;
   addedEvents: PolytokenHookEvent[];
 }> {
-  const settingsPath = path.join(projectRoot, ".polytoken", "hooks.json");
+  const settingsPath = path.join(rootDirectory, ".polytoken", "hooks.json");
   let merged;
   try {
-    merged = mergePolytokenHooks(await readPolytokenHooks(settingsPath));
+    merged = mergePolytokenHooks(
+      await readPolytokenHooks(settingsPath),
+      options.command,
+    );
   } catch (error) {
     throw new Error(
-      `Cannot update ${path.relative(projectRoot, settingsPath)} safely: ${
+      `Cannot update ${path.relative(rootDirectory, settingsPath)} safely: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

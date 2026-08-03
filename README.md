@@ -11,6 +11,7 @@ Codecut explains what happened and how to fix it.
 - Tests run on remote machines
 - Warnings in test, lint, typecheck, or build output
 - Temporary agent context left in code comments
+- Code comments longer than a limit you set ("no comments longer than one line")
 - Large changes that need an explanation
 
 Codecut only blocks behavior it can check reliably. Everything else stays
@@ -63,6 +64,35 @@ codecut setup --agent cursor --refresh-policy --accept
 ```
 
 You can also edit `.codecut/policy.json` directly.
+
+## User-level rules
+
+Rules that should apply in every project on your machine live in
+`~/.config/codecut/AGENTS.md` (Codecut honors `XDG_CONFIG_HOME`). Compile
+them once and every project's hooks pick them up:
+
+```sh
+codecut setup --user
+```
+
+User rules merge with each project's policy when hooks run; project rules
+win on overlap, and user rules are never written into a project's
+`.codecut/policy.json`. After editing the file, recompile with
+`codecut setup --user --refresh-policy` (add `--accept` to activate rules
+that can block work).
+
+To skip per-project setup entirely, add an agent and Codecut installs
+user-level hooks (for example `~/.cursor/hooks.json`):
+
+```sh
+codecut setup --user --agent cursor
+```
+
+User-level hooks enforce your user rules in every repository, even ones
+that never ran `codecut setup`, and store session state under
+`~/.local/state/codecut/` instead of the repository. In projects that have
+their own Codecut hooks, the user-level hook stands down so nothing runs
+twice. User-level hooks run the `codecut` binary from your PATH.
 
 Real-time enforcement requires lifecycle hooks from the coding agent. Codecut's
 policy engine is agent-neutral; Claude Code, Cursor, Codex, and Polytoken

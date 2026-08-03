@@ -33,14 +33,24 @@ function includesCodecutHook(value: unknown): boolean {
   return false;
 }
 
-function hookDefinition(event: CodexHookEvent): JsonObject {
+const DEFAULT_COMMANDS = {
+  command: CODEX_HOOK_COMMAND,
+  commandWindows:
+    `powershell -NoProfile -Command "& { $root = (git rev-parse --show-toplevel).Trim(); & (Join-Path $root '${WINDOWS_RUNTIME_PATH}') hook --agent codex }"`,
+};
+
+export type CodexCommands = typeof DEFAULT_COMMANDS;
+
+function hookDefinition(
+  event: CodexHookEvent,
+  commands: CodexCommands,
+): JsonObject {
   const definition: JsonObject = {
     hooks: [
       {
         type: "command",
-        command: CODEX_HOOK_COMMAND,
-        commandWindows:
-          `powershell -NoProfile -Command "& { $root = (git rev-parse --show-toplevel).Trim(); & (Join-Path $root '${WINDOWS_RUNTIME_PATH}') hook --agent codex }"`,
+        command: commands.command,
+        commandWindows: commands.commandWindows,
         timeout: event === "Stop" ? 10 : 5,
         statusMessage: "Checking Codecut policy",
       },
@@ -52,7 +62,10 @@ function hookDefinition(event: CodexHookEvent): JsonObject {
   return definition;
 }
 
-export function mergeCodexHooks(input: JsonObject): {
+export function mergeCodexHooks(
+  input: JsonObject,
+  commands: CodexCommands = DEFAULT_COMMANDS,
+): {
   settings: JsonObject;
   changedEvents: CodexHookEvent[];
 } {
@@ -65,7 +78,7 @@ export function mergeCodexHooks(input: JsonObject): {
     const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
     const unrelated = existing.filter((entry) => !includesCodecutHook(entry));
     const existingCodecut = existing.filter(includesCodecutHook);
-    const desired = hookDefinition(event);
+    const desired = hookDefinition(event, commands);
     if (
       existingCodecut.length !== 1 ||
       JSON.stringify(existingCodecut[0]) !== JSON.stringify(desired)
@@ -112,17 +125,23 @@ export async function validateCodexSettings(
   }
 }
 
-export async function installCodexHooks(projectRoot: string): Promise<{
+export async function installCodexHooks(
+  rootDirectory: string,
+  options: { commands?: CodexCommands } = {},
+): Promise<{
   settingsPath: string;
   addedEvents: CodexHookEvent[];
 }> {
-  const settingsPath = path.join(projectRoot, ".codex", "hooks.json");
+  const settingsPath = path.join(rootDirectory, ".codex", "hooks.json");
   let merged;
   try {
-    merged = mergeCodexHooks(await readCodexHooks(settingsPath));
+    merged = mergeCodexHooks(
+      await readCodexHooks(settingsPath),
+      options.commands,
+    );
   } catch (error) {
     throw new Error(
-      `Cannot update ${path.relative(projectRoot, settingsPath)} safely: ${
+      `Cannot update ${path.relative(rootDirectory, settingsPath)} safely: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

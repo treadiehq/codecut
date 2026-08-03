@@ -1,5 +1,6 @@
 import { evaluatePolicy } from "../core/engine.js";
-import { findProjectRoot, loadPolicy } from "../core/project.js";
+import { findProjectRoot } from "../core/project.js";
+import { loadEffectivePolicy } from "../core/user.js";
 import type {
   DiffStats,
   NormalizedHookEvent,
@@ -170,7 +171,7 @@ export async function testPolicy(cwd: string): Promise<{
       "No Codecut policy found here or in a parent directory. Run `codecut setup`.",
     );
   }
-  const policy = await loadPolicy(projectRoot);
+  const policy = await loadEffectivePolicy(projectRoot);
   const results = policy.rules.map((rule) => testRule(policy, rule));
   return {
     projectRoot,

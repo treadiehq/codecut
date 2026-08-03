@@ -115,6 +115,63 @@ function cleanDirective(line: string): string | undefined {
   return withoutListMarker;
 }
 
+export function parseDirectives(
+  content: string,
+  source: {
+    path: string;
+    scope: "project" | "user";
+    conditional: boolean;
+  },
+  seen: Set<string> = new Set(),
+): Directive[] {
+  const directives: Directive[] = [];
+  const lines = content.split(/\r?\n/);
+  let inCodeFence = false;
+  let inFrontmatter = lines[0]?.trim() === "---";
+
+  lines.forEach((line, index) => {
+    if (index === 0 && inFrontmatter) {
+      return;
+    }
+    if (inFrontmatter && line.trim() === "---") {
+      inFrontmatter = false;
+      return;
+    }
+    if (inFrontmatter) {
+      return;
+    }
+    if (line.trim().startsWith("```")) {
+      inCodeFence = !inCodeFence;
+      return;
+    }
+    if (inCodeFence) {
+      return;
+    }
+
+    const text = cleanDirective(line);
+    if (!text) {
+      return;
+    }
+
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    directives.push({
+      text,
+      source: {
+        path: source.path,
+        line: index + 1,
+        scope: source.scope,
+        conditional: source.conditional,
+      },
+    });
+  });
+
+  return directives;
+}
+
 export async function discoverDirectives(cwd: string): Promise<{
   directives: Directive[];
   sources: string[];
@@ -143,48 +200,14 @@ export async function discoverDirectives(cwd: string): Promise<{
     );
     const conditional =
       nestedInstruction || (cursorRule && !explicitlyAlwaysApplied);
-    let inCodeFence = false;
-    let inFrontmatter = lines[0]?.trim() === "---";
 
-    lines.forEach((line, index) => {
-      if (index === 0 && inFrontmatter) {
-        return;
-      }
-      if (inFrontmatter && line.trim() === "---") {
-        inFrontmatter = false;
-        return;
-      }
-      if (inFrontmatter) {
-        return;
-      }
-      if (line.trim().startsWith("```")) {
-        inCodeFence = !inCodeFence;
-        return;
-      }
-      if (inCodeFence) {
-        return;
-      }
-
-      const text = cleanDirective(line);
-      if (!text) {
-        return;
-      }
-
-      const key = text.toLowerCase();
-      if (seen.has(key)) {
-        return;
-      }
-      seen.add(key);
-      directives.push({
-        text,
-        source: {
-          path: relativePath,
-          line: index + 1,
-          scope: "project",
-          conditional,
-        },
-      });
-    });
+    directives.push(
+      ...parseDirectives(
+        content,
+        { path: relativePath, scope: "project", conditional },
+        seen,
+      ),
+    );
   }
 
   return {

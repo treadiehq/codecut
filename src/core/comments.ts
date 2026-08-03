@@ -4,6 +4,33 @@ export type CommentLine = {
 };
 
 /**
+ * Group scanned comment lines into blocks of contiguous line numbers, so a
+ * comment spanning several lines is measured as one block.
+ */
+export function groupCommentBlocks(comments: CommentLine[]): CommentLine[][] {
+  const blocks: CommentLine[][] = [];
+  let current: CommentLine[] = [];
+  let previousLine: number | undefined;
+
+  for (const comment of comments) {
+    if (previousLine !== undefined && comment.line === previousLine + 1) {
+      current.push(comment);
+    } else {
+      if (current.length > 0) {
+        blocks.push(current);
+      }
+      current = [comment];
+    }
+    previousLine = comment.line;
+  }
+  if (current.length > 0) {
+    blocks.push(current);
+  }
+
+  return blocks;
+}
+
+/**
  * Extract human comment text from source lines. Handles `//`, `#`, `--`, and
  * `;` line comments plus `/*`-style block comments. Input lines may be
  * non-contiguous (for example, added lines from a diff); block-comment state

@@ -1,29 +1,27 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
-import { eventsPath } from "./project.js";
 import { receiptSchema, type Receipt } from "./schema.js";
 
 export async function appendReceipts(
-  projectRoot: string,
+  eventsFile: string,
   receipts: Receipt[],
 ): Promise<void> {
   if (receipts.length === 0) {
     return;
   }
 
-  const destination = eventsPath(projectRoot);
-  await mkdir(path.dirname(destination), { recursive: true });
+  await mkdir(path.dirname(eventsFile), { recursive: true });
   const body = `${receipts.map((receipt) => JSON.stringify(receipt)).join("\n")}\n`;
-  await appendFile(destination, body, { encoding: "utf8", mode: 0o600 });
+  await appendFile(eventsFile, body, { encoding: "utf8", mode: 0o600 });
 }
 
 export async function readSessionReceipts(
-  projectRoot: string,
+  eventsFile: string,
   sessionId: string,
 ): Promise<Receipt[]> {
   let content: string;
   try {
-    content = await readFile(eventsPath(projectRoot), "utf8");
+    content = await readFile(eventsFile, "utf8");
   } catch (error) {
     if (
       error instanceof Error &&

@@ -19,12 +19,12 @@ function isObject(value: unknown): value is JsonObject {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function hookDefinition(event: HookEventName): JsonObject {
+function hookDefinition(event: HookEventName, command: string): JsonObject {
   const definition: JsonObject = {
     hooks: [
       {
         type: "command",
-        command: HOOK_COMMAND,
+        command,
         timeout: event === "Stop" ? 10 : 5,
       },
     ],
@@ -86,17 +86,21 @@ export async function validateClaudeSettings(
   }
 }
 
-export async function installClaudeHooks(projectRoot: string): Promise<{
+export async function installClaudeHooks(
+  rootDirectory: string,
+  options: { command?: string } = {},
+): Promise<{
   settingsPath: string;
   addedEvents: HookEventName[];
 }> {
-  const settingsPath = path.join(projectRoot, ".claude", "settings.json");
+  const command = options.command ?? HOOK_COMMAND;
+  const settingsPath = path.join(rootDirectory, ".claude", "settings.json");
   let settings: JsonObject;
   try {
     settings = await readClaudeSettings(settingsPath);
   } catch (error) {
     throw new Error(
-      `Cannot update ${path.relative(projectRoot, settingsPath)} safely: ${
+      `Cannot update ${path.relative(rootDirectory, settingsPath)} safely: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
@@ -116,7 +120,7 @@ export async function installClaudeHooks(projectRoot: string): Promise<{
     const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
     const unrelated = existing.filter((entry) => !includesCodecutHook(entry));
     const existingCodecut = existing.filter(includesCodecutHook);
-    const desired = hookDefinition(event);
+    const desired = hookDefinition(event, command);
     if (
       existingCodecut.length !== 1 ||
       JSON.stringify(existingCodecut[0]) !== JSON.stringify(desired)

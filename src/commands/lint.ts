@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { scanComments } from "../core/comments.js";
+import { groupCommentBlocks, scanComments } from "../core/comments.js";
 import { diffTotals, parseUnifiedDiff, type FileDiff } from "../core/diff.js";
 import {
   DEFAULT_CODE_FILE_PATTERNS,
@@ -68,6 +68,7 @@ export type LintConfig = {
   checks: Set<LintCheck>;
   filePatterns: string[];
   bannedPatterns: string[];
+  maxCommentLines?: number;
   todoPatterns: string[];
   debugPatterns: string[];
   testFilePatterns: string[];
@@ -146,6 +147,7 @@ export async function resolveLintConfig(
     } else {
       config.filePatterns = commentRule.filePatterns;
       config.bannedPatterns = commentRule.bannedPatterns;
+      config.maxCommentLines = commentRule.maxCommentLines;
     }
   }
 
@@ -195,7 +197,26 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
       config.checks.has("comment-quality") ||
       config.checks.has("todo-comments")
     ) {
-      for (const comment of scanComments(file.addedLines)) {
+      const fileComments = scanComments(file.addedLines);
+      if (
+        config.checks.has("comment-quality") &&
+        config.maxCommentLines !== undefined
+      ) {
+        const lineLimit = config.maxCommentLines;
+        for (const block of groupCommentBlocks(fileComments)) {
+          if (block.length > lineLimit) {
+            findings.push({
+              check: "comment-quality",
+              path: file.path,
+              line: block[0]?.line,
+              message: `New comment spans ${countLabel(block.length, "line")} (limit ${lineLimit}).`,
+              evidence: truncate(block.map((item) => item.text).join(" ")),
+              recovery: CHECK_INFO["comment-quality"].recovery,
+            });
+          }
+        }
+      }
+      for (const comment of fileComments) {
         if (
           config.checks.has("comment-quality") &&
           matchesAny(comment.text, config.bannedPatterns)

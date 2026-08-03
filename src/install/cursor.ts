@@ -37,9 +37,9 @@ function includesCodecutHook(value: unknown): boolean {
   return false;
 }
 
-function hookDefinition(event: CursorHookEvent): JsonObject {
+function hookDefinition(event: CursorHookEvent, command: string): JsonObject {
   const definition: JsonObject = {
-    command: CURSOR_HOOK_COMMAND,
+    command,
     timeout: event === "stop" ? 10 : 5,
   };
   if (event === "stop") {
@@ -50,7 +50,10 @@ function hookDefinition(event: CursorHookEvent): JsonObject {
   return definition;
 }
 
-export function mergeCursorHooks(input: JsonObject): {
+export function mergeCursorHooks(
+  input: JsonObject,
+  command: string = CURSOR_HOOK_COMMAND,
+): {
   settings: JsonObject;
   changedEvents: CursorHookEvent[];
 } {
@@ -69,7 +72,7 @@ export function mergeCursorHooks(input: JsonObject): {
     const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
     const unrelated = existing.filter((entry) => !includesCodecutHook(entry));
     const existingCodecut = existing.filter(includesCodecutHook);
-    const desired = hookDefinition(event);
+    const desired = hookDefinition(event, command);
     if (
       existingCodecut.length !== 1 ||
       JSON.stringify(existingCodecut[0]) !== JSON.stringify(desired)
@@ -116,17 +119,23 @@ export async function validateCursorSettings(
   }
 }
 
-export async function installCursorHooks(projectRoot: string): Promise<{
+export async function installCursorHooks(
+  rootDirectory: string,
+  options: { command?: string } = {},
+): Promise<{
   settingsPath: string;
   addedEvents: CursorHookEvent[];
 }> {
-  const settingsPath = path.join(projectRoot, ".cursor", "hooks.json");
+  const settingsPath = path.join(rootDirectory, ".cursor", "hooks.json");
   let merged;
   try {
-    merged = mergeCursorHooks(await readCursorSettings(settingsPath));
+    merged = mergeCursorHooks(
+      await readCursorSettings(settingsPath),
+      options.command,
+    );
   } catch (error) {
     throw new Error(
-      `Cannot update ${path.relative(projectRoot, settingsPath)} safely: ${
+      `Cannot update ${path.relative(rootDirectory, settingsPath)} safely: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

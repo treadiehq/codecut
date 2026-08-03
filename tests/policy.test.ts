@@ -171,6 +171,39 @@ describe("starter policy compilation", () => {
     expect(compiled.rules[0]?.type).toBe("advisory");
   });
 
+  it("parses a comment line limit from directive text", () => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text: "Use a subagent to review code comments longer than one line for slop",
+          source: { path: "AGENTS.md", line: 1, scope: "user" },
+        },
+        {
+          text: "Avoid multi-line comments",
+          source: { path: "AGENTS.md", line: 2, scope: "user" },
+        },
+        {
+          text: "Never reference tickets in comments",
+          source: { path: "AGENTS.md", line: 3, scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules.map((rule) => rule.type)).toEqual([
+      "comment-quality",
+      "comment-quality",
+      "comment-quality",
+    ]);
+    expect(
+      compiled.rules.map((rule) =>
+        rule.type === "comment-quality" ? rule.maxCommentLines : null,
+      ),
+    ).toEqual([1, 1, undefined]);
+  });
+
   it("rejects invalid policy regular expressions", () => {
     const compiled = policy();
     const testRule = compiled.rules.find(
@@ -543,6 +576,54 @@ describe("starter policy enforcement", () => {
     ]);
     expect(JSON.stringify(receipts)).not.toContain("APP-421");
     expect(JSON.stringify(receipts)).not.toContain("AGENTS.md");
+  });
+
+  it("flags comment blocks longer than the configured line limit", () => {
+    const limitedPolicy = compilePolicy({
+      directives: [
+        {
+          text: "Use a subagent to review code comments longer than one line for slop",
+          source: { path: "AGENTS.md", line: 1, scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+    const longComment = hookEvent("post-tool", {
+      toolName: "Edit",
+      toolInput: {
+        file_path: "src/example.ts",
+        new_string:
+          "// Retries are capped at three attempts.\n// Anything beyond that saturates the pool.\nexport const retries = 3;",
+      },
+    });
+    const shortComment = hookEvent("post-tool", {
+      toolName: "Edit",
+      toolInput: {
+        file_path: "src/example.ts",
+        new_string: "// Retries are capped at three attempts.\nexport const retries = 3;",
+      },
+    });
+
+    const flagged = evaluatePolicy({
+      policy: limitedPolicy,
+      event: longComment,
+      receipts: [],
+    });
+    expect(flagged.outcome).toBe("warn");
+    expect(flagged.violations[0]?.evidence).toContain(
+      "runs longer than 1 line",
+    );
+    expect(flagged.violations[0]?.directive).toContain("subagent");
+
+    expect(
+      evaluatePolicy({
+        policy: limitedPolicy,
+        event: shortComment,
+        receipts: [],
+      }).outcome,
+    ).toBe("allow");
   });
 
   it("allows durable comments and ignores documentation files", () => {

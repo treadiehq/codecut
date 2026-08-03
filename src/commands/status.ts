@@ -6,6 +6,13 @@ import {
   policyPath,
 } from "../core/project.js";
 import type { AgentName, PolicyRule } from "../core/schema.js";
+import {
+  displayPath,
+  loadUserPolicy,
+  mergePolicies,
+  userConfigDirectory,
+  userPolicyPath,
+} from "../core/user.js";
 import { RUNTIME_RELATIVE_PATH } from "../install/runtime.js";
 
 export type RuleStatus = {
@@ -13,12 +20,15 @@ export type RuleStatus = {
   type: PolicyRule["type"];
   directive: string;
   source: string;
+  scope: "project" | "user" | "generated";
   mode: "block" | "warn" | "off";
 };
 
 export type StatusResult = {
   projectRoot: string;
   policyPath: string;
+  userPolicyPath?: string;
+  userRuleCount: number;
   hookAgent: AgentName;
   runtimeInstalled: boolean;
   runtimePath: string;
@@ -30,33 +40,22 @@ export type StatusResult = {
   rules: RuleStatus[];
 };
 
-export async function getStatus(
-  cwd: string,
-  hookAgent: AgentName = "claude",
-): Promise<StatusResult> {
-  const projectRoot = await findProjectRoot(cwd);
-  if (!projectRoot) {
-    throw new Error(
-      "No Codecut policy found here or in a parent directory. Run `codecut setup`.",
-    );
-  }
-  const policy = await loadPolicy(projectRoot);
-  const runtimePath = path.join(projectRoot, RUNTIME_RELATIVE_PATH);
-  let runtimeInstalled = false;
-  try {
-    await access(runtimePath);
-    runtimeInstalled = true;
-  } catch {
-    // Missing runtime is reported in health status.
-  }
+export async function inspectHookSettings(
+  baseDirectory: string,
+  hookAgent: AgentName,
+): Promise<{
+  settingsPath: string;
+  installedHookEvents: string[];
+  missingHookEvents: string[];
+}> {
   const settingsPath =
     hookAgent === "cursor"
-      ? path.join(projectRoot, ".cursor", "hooks.json")
+      ? path.join(baseDirectory, ".cursor", "hooks.json")
       : hookAgent === "codex"
-        ? path.join(projectRoot, ".codex", "hooks.json")
+        ? path.join(baseDirectory, ".codex", "hooks.json")
         : hookAgent === "polytoken"
-          ? path.join(projectRoot, ".polytoken", "hooks.json")
-        : path.join(projectRoot, ".claude", "settings.json");
+          ? path.join(baseDirectory, ".polytoken", "hooks.json")
+        : path.join(baseDirectory, ".claude", "settings.json");
   const requiredHookEvents =
     hookAgent === "cursor"
       ? [
@@ -116,9 +115,42 @@ export async function getStatus(
     (event) => !installedHookEvents.includes(event),
   );
 
+  return { settingsPath, installedHookEvents, missingHookEvents };
+}
+
+export async function getStatus(
+  cwd: string,
+  hookAgent: AgentName = "claude",
+): Promise<StatusResult> {
+  const projectRoot = await findProjectRoot(cwd);
+  if (!projectRoot) {
+    throw new Error(
+      "No Codecut policy found here or in a parent directory. Run `codecut setup`.",
+    );
+  }
+  const configDirectory = userConfigDirectory();
+  const userPolicy = await loadUserPolicy(configDirectory);
+  const policy = mergePolicies(await loadPolicy(projectRoot), userPolicy);
+  const runtimePath = path.join(projectRoot, RUNTIME_RELATIVE_PATH);
+  let runtimeInstalled = false;
+  try {
+    await access(runtimePath);
+    runtimeInstalled = true;
+  } catch {
+    // Missing runtime is reported in health status.
+  }
+  const { installedHookEvents, missingHookEvents } = await inspectHookSettings(
+    projectRoot,
+    hookAgent,
+  );
+
   return {
     projectRoot,
     policyPath: policyPath(projectRoot),
+    userPolicyPath: userPolicy
+      ? displayPath(userPolicyPath(configDirectory))
+      : undefined,
+    userRuleCount: userPolicy?.rules.length ?? 0,
     hookAgent,
     runtimeInstalled,
     runtimePath,
@@ -132,6 +164,7 @@ export async function getStatus(
       type: rule.type,
       directive: rule.directive,
       source: `${rule.source.path}${rule.source.line ? `:${rule.source.line}` : ""}`,
+      scope: rule.source.scope,
       mode:
         rule.mode === "block" && !rule.confirmed ? "warn" : rule.mode,
     })),
@@ -142,6 +175,9 @@ export function formatStatus(status: StatusResult): string {
   const lines = [
     `project: ${status.projectRoot}`,
     `policy: ${status.policyPath}`,
+    ...(status.userPolicyPath
+      ? [`user policy: ${status.userPolicyPath} (${status.userRuleCount} rules)`]
+      : []),
     `runtime: ${status.runtimeInstalled ? "installed" : "missing"}`,
     `agents: ${status.agents.join(", ")}`,
     `hooks (${status.hookAgent}): ${
