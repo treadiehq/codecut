@@ -3,14 +3,17 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { setupUserRules } from "../src/commands/user.js";
 import { compilePolicy } from "../src/core/compiler.js";
+import { evaluatePolicy } from "../src/core/engine.js";
 import { writePolicy } from "../src/core/project.js";
 import type { Directive } from "../src/core/schema.js";
 import {
   discoverUserDirectives,
+  loadEnforcementPolicy,
   loadEffectivePolicy,
   loadUserPolicy,
   mergePolicies,
   userConfigDirectory,
+  userPolicyPath,
   userRulesPath,
 } from "../src/core/user.js";
 
@@ -269,5 +272,51 @@ describe("effective policy loading", () => {
 
     const policy = await loadEffectivePolicy(projectRoot, configDirectory);
     expect(policy.rules).toHaveLength(1);
+  });
+
+  it("enforces the project policy when the user policy is invalid", async () => {
+    const projectRoot = await temporaryDirectory(".codecut-project-");
+    const configDirectory = await temporaryDirectory(".codecut-user-");
+
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [directive("Use local machines for testing")],
+        sources: ["AGENTS.md"],
+        agent: "claude",
+        acceptBlockingRules: true,
+      }),
+    );
+    await writeFile(userPolicyPath(configDirectory), "{invalid", "utf8");
+
+    await expect(
+      loadEffectivePolicy(projectRoot, configDirectory),
+    ).rejects.toThrow();
+
+    const result = await loadEnforcementPolicy(
+      projectRoot,
+      configDirectory,
+    );
+    const decision = evaluatePolicy({
+      policy: result.policy,
+      event: {
+        agent: "claude",
+        stage: "pre-tool",
+        sessionId: "corrupt-user-policy",
+        cwd: projectRoot,
+        occurredAt: "2026-01-01T00:00:00.000Z",
+        toolName: "Bash",
+        toolInput: { command: "ssh runner npm test" },
+        stopHookActive: false,
+        loopCount: 0,
+      },
+      receipts: [],
+    });
+
+    expect(result.warning).toContain(
+      "enforced the project policy but skipped invalid user policy",
+    );
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations[0]?.source.scope).toBe("project");
   });
 });

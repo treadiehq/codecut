@@ -27,7 +27,7 @@ import { findGitRoot, inspectDiff } from "../core/git.js";
 import { eventsPath, findProjectRoot } from "../core/project.js";
 import type { AgentName, Policy } from "../core/schema.js";
 import {
-  loadEffectivePolicy,
+  loadEnforcementPolicy,
   loadUserPolicy,
   userConfigDirectory,
   userEventsPath,
@@ -103,7 +103,11 @@ export async function runHook(
         process.stdout.write("{}\n");
         return;
       }
-      policy = await loadEffectivePolicy(projectRoot);
+      const effectivePolicy = await loadEnforcementPolicy(projectRoot);
+      policy = effectivePolicy.policy;
+      if (effectivePolicy.warning) {
+        process.stderr.write(`${effectivePolicy.warning}\n`);
+      }
       diffRoot = projectRoot;
       eventsFile = eventsPath(projectRoot);
     } else {

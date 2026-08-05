@@ -122,3 +122,29 @@ export async function loadEffectivePolicy(
   const userPolicy = await loadUserPolicy(configDirectory);
   return mergePolicies(projectPolicy, userPolicy);
 }
+
+export type EnforcementPolicyResult = {
+  policy: Policy;
+  warning?: string;
+};
+
+/**
+ * Load a project policy for hook enforcement without allowing an invalid
+ * optional user policy to disable the project's rules.
+ */
+export async function loadEnforcementPolicy(
+  projectRoot: string,
+  configDirectory: string = userConfigDirectory(),
+): Promise<EnforcementPolicyResult> {
+  const projectPolicy = await loadPolicy(projectRoot);
+  try {
+    const userPolicy = await loadUserPolicy(configDirectory);
+    return { policy: mergePolicies(projectPolicy, userPolicy) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      policy: projectPolicy,
+      warning: `Codecut enforced the project policy but skipped invalid user policy ${displayPath(userPolicyPath(configDirectory))}: ${message}`,
+    };
+  }
+}
