@@ -31,6 +31,87 @@ export function groupCommentBlocks(comments: CommentLine[]): CommentLine[][] {
 }
 
 /**
+ * Keep executable source text while removing comments and string contents.
+ * Comment and quote state carries across contiguous added lines, but resets
+ * across diff gaps where the unseen source may have closed either construct.
+ */
+export function stripNonExecutableText(lines: CommentLine[]): CommentLine[] {
+  const codeLines: CommentLine[] = [];
+  let inBlockComment = false;
+  let quote: '"' | "'" | "`" | undefined;
+  let previousLine: number | undefined;
+
+  for (const { line, text } of lines) {
+    if (previousLine !== undefined && line !== previousLine + 1) {
+      inBlockComment = false;
+      quote = undefined;
+    }
+    previousLine = line;
+
+    let code = "";
+    let escaped = false;
+
+    for (let index = 0; index < text.length; index += 1) {
+      const current = text[index];
+      const next = text[index + 1];
+
+      if (inBlockComment) {
+        if (current === "*" && next === "/") {
+          inBlockComment = false;
+          index += 1;
+        }
+        continue;
+      }
+
+      if (quote !== undefined) {
+        if (escaped) {
+          escaped = false;
+        } else if (current === "\\") {
+          escaped = true;
+        } else if (current === quote) {
+          code += current;
+          quote = undefined;
+        }
+        continue;
+      }
+
+      if (current === '"' || current === "'" || current === "`") {
+        quote = current;
+        code += current;
+        continue;
+      }
+      if (current === "/" && next === "*") {
+        inBlockComment = true;
+        index += 1;
+        continue;
+      }
+      if (current === "/" && next === "/") {
+        break;
+      }
+      if (
+        current === "#" &&
+        (index === 0 || /\s/.test(text[index - 1] ?? ""))
+      ) {
+        break;
+      }
+      if (
+        current === "-" &&
+        next === "-" &&
+        (text[index + 2] === undefined || /\s/.test(text[index + 2] ?? ""))
+      ) {
+        break;
+      }
+
+      code += current;
+    }
+
+    codeLines.push({ line, text: code });
+  }
+
+  return codeLines;
+}
+
+/**
  * Extract human comment text from source lines. Handles `//`, `#`, `--`, and
  * `;` line comments plus `/*`-style block comments. Input lines may be
  * non-contiguous (for example, added lines from a diff); block-comment state

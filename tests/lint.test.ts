@@ -222,6 +222,59 @@ describe("lint checks", () => {
     ).toEqual([]);
   });
 
+  it("ignores debug-like text in comments and strings", () => {
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.ts b/src/x.ts",
+          "--- a/src/x.ts",
+          "+++ b/src/x.ts",
+          "@@ -0,0 +1,8 @@",
+          '+// console.log("commented");',
+          "+/* debugger; */",
+          "+/*",
+          "+ * breakpoint()",
+          "+ */",
+          "+# pdb.set_trace()",
+          "+-- var_dump()",
+          '+const example = "binding.pry";',
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+
+    expect(
+      result.findings.filter(
+        (finding) => finding.check === "debug-artifacts",
+      ),
+    ).toEqual([]);
+  });
+
+  it("flags active debug statements with trailing comments", () => {
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.ts b/src/x.ts",
+          "--- a/src/x.ts",
+          "+++ b/src/x.ts",
+          "@@ -0,0 +1,3 @@",
+          "+debugger; // TODO: remove",
+          '+console.log("active"); /* temporary */',
+          '+const url = "https://example.com"; console.debug(url);',
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+    const debugFindings = result.findings.filter(
+      (finding) => finding.check === "debug-artifacts",
+    );
+
+    expect(debugFindings.map((finding) => finding.line)).toEqual([1, 2, 3]);
+    expect(debugFindings[0]?.evidence).toBe("debugger; // TODO: remove");
+  });
+
   it("warns when the diff exceeds the blast-radius limits", () => {
     const config = defaultLintConfig();
     config.maxFiles = 2;

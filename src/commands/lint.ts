@@ -3,7 +3,11 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
-import { groupCommentBlocks, scanComments } from "../core/comments.js";
+import {
+  groupCommentBlocks,
+  scanComments,
+  stripNonExecutableText,
+} from "../core/comments.js";
 import { diffTotals, parseUnifiedDiff, type FileDiff } from "../core/diff.js";
 import {
   DEFAULT_CODE_FILE_PATTERNS,
@@ -250,8 +254,9 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
       config.checks.has("debug-artifacts") &&
       !matchesAny(file.path, config.testFilePatterns)
     ) {
-      for (const added of file.addedLines) {
-        if (matchesAny(added.text, config.debugPatterns)) {
+      const codeLines = stripNonExecutableText(file.addedLines);
+      for (const [index, added] of file.addedLines.entries()) {
+        if (matchesAny(codeLines[index]?.text ?? "", config.debugPatterns)) {
           findings.push({
             check: "debug-artifacts",
             path: file.path,
