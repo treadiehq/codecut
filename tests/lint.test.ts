@@ -229,7 +229,7 @@ describe("lint checks", () => {
           "diff --git a/src/x.ts b/src/x.ts",
           "--- a/src/x.ts",
           "+++ b/src/x.ts",
-          "@@ -0,0 +1,8 @@",
+          "@@ -0,0 +1,12 @@",
           '+// console.log("commented");',
           "+/* debugger; */",
           "+/*",
@@ -238,6 +238,10 @@ describe("lint checks", () => {
           "+# pdb.set_trace()",
           "+-- var_dump()",
           '+const example = "binding.pry";',
+          "+const template = `To debug, use console.log()`;",
+          '+const nested = `outer ${`console.log("text")`} end`;',
+          '+const expressionString = `${"console.log("}`;',
+          '+const commentedExpression = `${/* console.log("comment") */ value}`;',
           "",
         ].join("\n"),
       ),
@@ -249,6 +253,144 @@ describe("lint checks", () => {
         (finding) => finding.check === "debug-artifacts",
       ),
     ).toEqual([]);
+  });
+
+  it("handles hash syntax according to the source language", () => {
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.py b/src/x.py",
+          "--- a/src/x.py",
+          "+++ b/src/x.py",
+          "@@ -0,0 +1 @@",
+          "+result=calc()#pdb.set_trace()",
+          "diff --git a/src/x.rb b/src/x.rb",
+          "--- a/src/x.rb",
+          "+++ b/src/x.rb",
+          "@@ -0,0 +1 @@",
+          "+result=calc#binding.pry",
+          "diff --git a/src/x.php b/src/x.php",
+          "--- a/src/x.php",
+          "+++ b/src/x.php",
+          "@@ -0,0 +1 @@",
+          "+$result=calc()#var_dump()",
+          "diff --git a/src/x.sh b/src/x.sh",
+          "--- a/src/x.sh",
+          "+++ b/src/x.sh",
+          "@@ -0,0 +1 @@",
+          "+result=$(process)#debugger",
+          "diff --git a/src/x.ts b/src/x.ts",
+          "--- a/src/x.ts",
+          "+++ b/src/x.ts",
+          "@@ -0,0 +1,4 @@",
+          "+this.#debugger;",
+          "+this.#console.log(data);",
+          "+this.#var_dump(data);",
+          "+this.#byebug;",
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+
+    expect(
+      result.findings.filter(
+        (finding) => finding.check === "debug-artifacts",
+      ),
+    ).toEqual([]);
+  });
+
+  it("applies built-in debug patterns only to their languages", () => {
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.py b/src/x.py",
+          "--- a/src/x.py",
+          "+++ b/src/x.py",
+          "@@ -0,0 +1,2 @@",
+          "+pdb.set_trace()",
+          "+breakpoint()",
+          "diff --git a/src/x.rb b/src/x.rb",
+          "--- a/src/x.rb",
+          "+++ b/src/x.rb",
+          "@@ -0,0 +1,2 @@",
+          "+binding.pry",
+          "+byebug",
+          "diff --git a/src/x.php b/src/x.php",
+          "--- a/src/x.php",
+          "+++ b/src/x.php",
+          "@@ -0,0 +1 @@",
+          "+var_dump($value)",
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+
+    expect(
+      result.findings
+        .filter((finding) => finding.check === "debug-artifacts")
+        .map((finding) => `${finding.path}:${finding.line}`),
+    ).toEqual([
+      "src/x.php:1",
+      "src/x.py:1",
+      "src/x.py:2",
+      "src/x.rb:1",
+      "src/x.rb:2",
+    ]);
+  });
+
+  it("keeps custom debug patterns language-neutral", () => {
+    const config = defaultLintConfig();
+    config.debugPatterns = [
+      ...config.debugPatterns,
+      String.raw`\bcustom_debug\s*\(`,
+    ];
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.sh b/src/x.sh",
+          "--- a/src/x.sh",
+          "+++ b/src/x.sh",
+          "@@ -0,0 +1 @@",
+          "+custom_debug(value)",
+          "",
+        ].join("\n"),
+      ),
+      config,
+    );
+
+    expect(
+      result.findings.filter(
+        (finding) => finding.check === "debug-artifacts",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("flags debug statements inside template expressions", () => {
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.ts b/src/x.ts",
+          "--- a/src/x.ts",
+          "+++ b/src/x.ts",
+          "@@ -0,0 +1,6 @@",
+          '+const simple = `${console.log("debug")}`;',
+          '+const nested = `outer ${`inner ${console.debug("debug")}`}`;',
+          '+const object = `${({ value: console.trace("debug"), text: "}" }).value}`;',
+          "+const multiline = `outer ${",
+          '+console.trace("debug");',
+          "+}`;",
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+    const debugFindings = result.findings.filter(
+      (finding) => finding.check === "debug-artifacts",
+    );
+
+    expect(debugFindings.map((finding) => finding.line)).toEqual([1, 2, 3, 5]);
   });
 
   it("flags active debug statements with trailing comments", () => {

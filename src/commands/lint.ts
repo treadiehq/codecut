@@ -7,6 +7,7 @@ import {
   groupCommentBlocks,
   scanComments,
   stripNonExecutableText,
+  type HashCommentMode,
 } from "../core/comments.js";
 import { diffTotals, parseUnifiedDiff, type FileDiff } from "../core/diff.js";
 import {
@@ -15,7 +16,10 @@ import {
   DEFAULT_DEBUG_ARTIFACT_PATTERNS,
   DEFAULT_TEST_FILE_PATTERNS,
   DEFAULT_TODO_PATTERNS,
+  debugArtifactPatternsForPath,
   matchesAny,
+  sourceLanguageForPath,
+  type SourceLanguage,
 } from "../core/patterns.js";
 import { findProjectRoot, loadPolicy } from "../core/project.js";
 
@@ -180,6 +184,16 @@ function matchesAnyCaseSensitive(value: string, patterns: string[]): boolean {
   });
 }
 
+function hashCommentMode(language: SourceLanguage): HashCommentMode {
+  if (language === "python" || language === "ruby") {
+    return "anywhere";
+  }
+  if (language === "php") {
+    return "php";
+  }
+  return language === "javascript" ? "never" : "whitespace";
+}
+
 function truncate(value: string, max = 160): string {
   const collapsed = value.trim().replace(/\s+/g, " ");
   return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
@@ -254,9 +268,16 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
       config.checks.has("debug-artifacts") &&
       !matchesAny(file.path, config.testFilePatterns)
     ) {
-      const codeLines = stripNonExecutableText(file.addedLines);
+      const language = sourceLanguageForPath(file.path);
+      const codeLines = stripNonExecutableText(file.addedLines, {
+        hashComments: hashCommentMode(language),
+      });
+      const debugPatterns = debugArtifactPatternsForPath(
+        file.path,
+        config.debugPatterns,
+      );
       for (const [index, added] of file.addedLines.entries()) {
-        if (matchesAny(codeLines[index]?.text ?? "", config.debugPatterns)) {
+        if (matchesAny(codeLines[index]?.text ?? "", debugPatterns)) {
           findings.push({
             check: "debug-artifacts",
             path: file.path,

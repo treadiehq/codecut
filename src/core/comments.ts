@@ -30,30 +30,53 @@ export function groupCommentBlocks(comments: CommentLine[]): CommentLine[][] {
   return blocks;
 }
 
+type ExecutableContext =
+  | { kind: "code" }
+  | { kind: "string"; quote: '"' | "'"; escaped: boolean }
+  | { kind: "template"; escaped: boolean }
+  | { kind: "template-expression"; braceDepth: number };
+
+export type HashCommentMode =
+  | "anywhere"
+  | "php"
+  | "whitespace"
+  | "never";
+
 /**
  * Keep executable source text while removing comments and string contents.
- * Comment and quote state carries across contiguous added lines, but resets
- * across diff gaps where the unseen source may have closed either construct.
+ * Template text is removed while `${...}` expressions remain executable.
+ * Scanner state carries across contiguous added lines, but resets across diff
+ * gaps where unseen source may have closed an open construct.
  */
-export function stripNonExecutableText(lines: CommentLine[]): CommentLine[] {
+export function stripNonExecutableText(
+  lines: CommentLine[],
+  options: { hashComments?: HashCommentMode } = {},
+): CommentLine[] {
   const codeLines: CommentLine[] = [];
+  const hashComments = options.hashComments ?? "whitespace";
+  let contexts: ExecutableContext[] = [{ kind: "code" }];
   let inBlockComment = false;
-  let quote: '"' | "'" | "`" | undefined;
   let previousLine: number | undefined;
 
   for (const { line, text } of lines) {
     if (previousLine !== undefined && line !== previousLine + 1) {
       inBlockComment = false;
-      quote = undefined;
+      contexts = [{ kind: "code" }];
     }
     previousLine = line;
 
+    for (const context of contexts) {
+      if (context.kind === "string" || context.kind === "template") {
+        context.escaped = false;
+      }
+    }
+
     let code = "";
-    let escaped = false;
 
     for (let index = 0; index < text.length; index += 1) {
       const current = text[index];
       const next = text[index + 1];
+      const context = contexts.at(-1) ?? { kind: "code" };
 
       if (inBlockComment) {
         if (current === "*" && next === "/") {
@@ -63,21 +86,42 @@ export function stripNonExecutableText(lines: CommentLine[]): CommentLine[] {
         continue;
       }
 
-      if (quote !== undefined) {
-        if (escaped) {
-          escaped = false;
+      if (context.kind === "string") {
+        if (context.escaped) {
+          context.escaped = false;
         } else if (current === "\\") {
-          escaped = true;
-        } else if (current === quote) {
+          context.escaped = true;
+        } else if (current === context.quote) {
           code += current;
-          quote = undefined;
+          contexts.pop();
         }
         continue;
       }
 
-      if (current === '"' || current === "'" || current === "`") {
-        quote = current;
+      if (context.kind === "template") {
+        if (context.escaped) {
+          context.escaped = false;
+        } else if (current === "\\") {
+          context.escaped = true;
+        } else if (current === "`") {
+          code += current;
+          contexts.pop();
+        } else if (current === "$" && next === "{") {
+          code += "${";
+          contexts.push({ kind: "template-expression", braceDepth: 0 });
+          index += 1;
+        }
+        continue;
+      }
+
+      if (current === '"' || current === "'") {
         code += current;
+        contexts.push({ kind: "string", quote: current, escaped: false });
+        continue;
+      }
+      if (current === "`") {
+        code += current;
+        contexts.push({ kind: "template", escaped: false });
         continue;
       }
       if (current === "/" && next === "*") {
@@ -88,11 +132,16 @@ export function stripNonExecutableText(lines: CommentLine[]): CommentLine[] {
       if (current === "/" && next === "/") {
         break;
       }
-      if (
-        current === "#" &&
-        (index === 0 || /\s/.test(text[index - 1] ?? ""))
-      ) {
-        break;
+      if (current === "#") {
+        const startsHashComment =
+          (next === "!" && index === 0) ||
+          hashComments === "anywhere" ||
+          (hashComments === "php" && next !== "[") ||
+          (hashComments === "whitespace" &&
+            (index === 0 || /\s/.test(text[index - 1] ?? "")));
+        if (startsHashComment) {
+          break;
+        }
       }
       if (
         current === "-" &&
@@ -100,6 +149,18 @@ export function stripNonExecutableText(lines: CommentLine[]): CommentLine[] {
         (text[index + 2] === undefined || /\s/.test(text[index + 2] ?? ""))
       ) {
         break;
+      }
+      if (context.kind === "template-expression") {
+        if (current === "{") {
+          context.braceDepth += 1;
+        } else if (current === "}") {
+          if (context.braceDepth === 0) {
+            code += current;
+            contexts.pop();
+            continue;
+          }
+          context.braceDepth -= 1;
+        }
       }
 
       code += current;

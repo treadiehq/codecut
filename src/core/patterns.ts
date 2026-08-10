@@ -56,15 +56,74 @@ export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
   String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent|I\s+(?:added|changed|implemented))\b`,
 ];
 
+const CONSOLE_DEBUG_PATTERN =
+  String.raw`(?<!#)\bconsole\.(?:log|debug|trace)\s*\(`;
+const DEBUGGER_PATTERN =
+  String.raw`(?<![#.\w$])debugger\s*;?\s*$`;
+const PYTHON_PDB_PATTERN = String.raw`\bpdb\.set_trace\s*\(`;
+const PYTHON_BREAKPOINT_PATTERN = String.raw`\bbreakpoint\s*\(\s*\)`;
+const RUBY_PRY_PATTERN = String.raw`\bbinding\.pry\b`;
+const RUBY_BYEBUG_PATTERN = String.raw`\bbyebug\b`;
+const PHP_VAR_DUMP_PATTERN = String.raw`\bvar_dump\s*\(`;
+
 export const DEFAULT_DEBUG_ARTIFACT_PATTERNS = [
-  String.raw`\bconsole\.(?:log|debug|trace)\s*\(`,
-  String.raw`\bdebugger\s*;?\s*$`,
-  String.raw`\bpdb\.set_trace\s*\(`,
-  String.raw`\bbreakpoint\s*\(\s*\)`,
-  String.raw`\bbinding\.pry\b`,
-  String.raw`\bbyebug\b`,
-  String.raw`\bvar_dump\s*\(`,
+  CONSOLE_DEBUG_PATTERN,
+  DEBUGGER_PATTERN,
+  PYTHON_PDB_PATTERN,
+  PYTHON_BREAKPOINT_PATTERN,
+  RUBY_PRY_PATTERN,
+  RUBY_BYEBUG_PATTERN,
+  PHP_VAR_DUMP_PATTERN,
 ];
+
+export type SourceLanguage =
+  | "javascript"
+  | "python"
+  | "ruby"
+  | "php"
+  | "shell"
+  | "other";
+
+export function sourceLanguageForPath(filePath: string): SourceLanguage {
+  if (/\.[cm]?[jt]sx?$/i.test(filePath)) {
+    return "javascript";
+  }
+  if (/\.py$/i.test(filePath)) {
+    return "python";
+  }
+  if (/\.rb$/i.test(filePath)) {
+    return "ruby";
+  }
+  if (/\.php$/i.test(filePath)) {
+    return "php";
+  }
+  if (/\.(?:sh|bash|zsh)$/i.test(filePath)) {
+    return "shell";
+  }
+  return "other";
+}
+
+const DEBUG_PATTERNS_BY_LANGUAGE: Record<SourceLanguage, readonly string[]> = {
+  javascript: [CONSOLE_DEBUG_PATTERN, DEBUGGER_PATTERN],
+  python: [PYTHON_PDB_PATTERN, PYTHON_BREAKPOINT_PATTERN],
+  ruby: [RUBY_PRY_PATTERN, RUBY_BYEBUG_PATTERN],
+  php: [PHP_VAR_DUMP_PATTERN],
+  shell: [],
+  other: [],
+};
+
+export function debugArtifactPatternsForPath(
+  filePath: string,
+  configuredPatterns: string[],
+): string[] {
+  const builtIns = new Set(DEFAULT_DEBUG_ARTIFACT_PATTERNS);
+  const allowedBuiltIns = new Set(
+    DEBUG_PATTERNS_BY_LANGUAGE[sourceLanguageForPath(filePath)],
+  );
+  return configuredPatterns.filter(
+    (pattern) => !builtIns.has(pattern) || allowedBuiltIns.has(pattern),
+  );
+}
 
 export const DEFAULT_TODO_PATTERNS = [
   String.raw`\b(?:TODO|FIXME|HACK|XXX)\b`,
