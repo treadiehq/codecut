@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -125,6 +132,23 @@ describe("user state paths", () => {
   it("falls back to ~/.local/state when XDG_STATE_HOME is unset", () => {
     expect(userStateDirectory({})).toContain(
       path.join(".local", "state", "codecut"),
+    );
+  });
+
+  it("uses one events file for symlinked and physical state roots", async () => {
+    const root = await temporaryDirectory(".codecut-symlink-");
+    const physicalRoot = path.join(root, "physical");
+    const symlinkRoot = path.join(root, "symlink");
+    const stateDirectory = path.join(root, "state");
+    await mkdir(physicalRoot);
+    await symlink(
+      physicalRoot,
+      symlinkRoot,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    expect(userEventsPath(symlinkRoot, stateDirectory)).toBe(
+      userEventsPath(physicalRoot, stateDirectory),
     );
   });
 });

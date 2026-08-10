@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -35,8 +36,15 @@ export function userEventsPath(
   stateRoot: string,
   stateDirectory: string = userStateDirectory(),
 ): string {
+  const resolvedStateRoot = path.resolve(stateRoot);
+  let canonicalStateRoot = resolvedStateRoot;
+  try {
+    canonicalStateRoot = realpathSync.native(resolvedStateRoot);
+  } catch {
+    // Hooks may report a path that no longer exists; keep hashing deterministic.
+  }
   const digest = createHash("sha256")
-    .update(path.resolve(stateRoot))
+    .update(canonicalStateRoot)
     .digest("hex")
     .slice(0, 16);
   return path.join(stateDirectory, `events-${digest}.jsonl`);
