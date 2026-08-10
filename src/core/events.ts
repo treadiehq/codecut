@@ -1,5 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
-import { groupCommentBlocks, scanComments } from "./comments.js";
+import {
+  groupCommentBlocks,
+  scanComments,
+  type CommentLine,
+} from "./comments.js";
 import {
   countWarningLines,
   matchesAny,
@@ -104,20 +108,81 @@ export function extractEditedPaths(event: NormalizedHookEvent): string[] {
   return [...paths];
 }
 
-function addedText(event: NormalizedHookEvent): string {
+function patchAddedLines(command: string): CommentLine[] {
+  const added: CommentLine[] = [];
+  let activeFile = false;
+  let nextLine = 1;
+  let lastAddedLine: number | undefined;
+
+  const startSection = (suggestedLine?: number): void => {
+    const minimum =
+      lastAddedLine === undefined ? 1 : lastAddedLine + 2;
+    nextLine = Math.max(suggestedLine ?? nextLine, minimum);
+  };
+
+  for (const line of command.split(/\r?\n/)) {
+    const fileHeader = line.match(
+      /^\*\*\* (Add|Update|Delete) File: /,
+    );
+    if (fileHeader?.[1]) {
+      activeFile = fileHeader[1] !== "Delete";
+      if (activeFile) {
+        startSection();
+      }
+      continue;
+    }
+    if (line === "*** End Patch") {
+      activeFile = false;
+      continue;
+    }
+    if (!activeFile) {
+      continue;
+    }
+
+    if (line.startsWith("@@")) {
+      const numeric = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+      startSection(
+        numeric?.[1] === undefined
+          ? nextLine + 1
+          : Number.parseInt(numeric[1], 10),
+      );
+      continue;
+    }
+    if (line.startsWith("***")) {
+      continue;
+    }
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      added.push({ line: nextLine, text: line.slice(1) });
+      lastAddedLine = nextLine;
+      nextLine += 1;
+      continue;
+    }
+    if (line.startsWith("-")) {
+      continue;
+    }
+
+    // Context occupies a line in the updated file. Counting it preserves
+    // gaps between comment additions even when they share one patch hunk.
+    nextLine += 1;
+  }
+
+  return added;
+}
+
+function addedLines(event: NormalizedHookEvent): CommentLine[] {
   const command = extractCommand(event.toolInput);
   if (command?.includes("*** Begin Patch")) {
-    return command
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
-      .map((line) => line.slice(1))
-      .join("\n");
+    return patchAddedLines(command);
   }
 
   const content =
     objectValue(event.toolInput, "new_string") ??
     objectValue(event.toolInput, "content");
-  return typeof content === "string" ? content : "";
+  return typeof content === "string"
+    ? content
+        .split(/\r?\n/)
+        .map((text, index) => ({ line: index + 1, text }))
+    : [];
 }
 
 export function extractAddedComments(event: NormalizedHookEvent): string[] {
@@ -125,11 +190,7 @@ export function extractAddedComments(event: NormalizedHookEvent): string[] {
     return [];
   }
 
-  return scanComments(
-    addedText(event)
-      .split(/\r?\n/)
-      .map((text, index) => ({ line: index + 1, text })),
-  ).map((comment) => comment.text);
+  return scanComments(addedLines(event)).map((comment) => comment.text);
 }
 
 export function extractAddedCommentBlocks(
@@ -140,11 +201,7 @@ export function extractAddedCommentBlocks(
   }
 
   return groupCommentBlocks(
-    scanComments(
-      addedText(event)
-        .split(/\r?\n/)
-        .map((text, index) => ({ line: index + 1, text })),
-    ),
+    scanComments(addedLines(event)),
   ).map((block) => block.map((comment) => comment.text));
 }
 

@@ -4,6 +4,7 @@ import { evaluatePolicy } from "../src/core/engine.js";
 import {
   deriveAcknowledgementReceipts,
   deriveReceipts,
+  extractAddedCommentBlocks,
 } from "../src/core/events.js";
 import type {
   Directive,
@@ -624,6 +625,135 @@ describe("starter policy enforcement", () => {
         receipts: [],
       }).outcome,
     ).toBe("allow");
+  });
+
+  it("explains how to recover from every comment-quality violation", () => {
+    const limitedPolicy = compilePolicy({
+      directives: [
+        {
+          text: "Code comments longer than one line are not allowed",
+          source: { path: "AGENTS.md", line: 1, scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+    const event = hookEvent("post-tool", {
+      toolName: "Edit",
+      toolInput: {
+        file_path: "src/example.ts",
+        new_string:
+          "// Per the prompt, retries are capped.\n// Higher values saturate the pool.",
+      },
+    });
+
+    const decision = evaluatePolicy({
+      policy: limitedPolicy,
+      event,
+      receipts: [],
+    });
+    const violation = decision.violations[0];
+
+    expect(violation?.evidence).toContain(
+      "mentions temporary agent context",
+    );
+    expect(violation?.evidence).toContain("runs longer than 1 line");
+    expect(violation?.recovery).toContain("Remove temporary agent context");
+    expect(violation?.recovery).toContain("at most 1 line");
+  });
+
+  it.each([
+    ["named", "@@ first function", "@@ second function"],
+    ["numeric", "@@ -1,2 +4,3 @@ first", "@@ -40,2 +54,3 @@ second"],
+  ])(
+    "keeps comments in separate %s patch hunks",
+    (_kind, firstHunk, secondHunk) => {
+      const event = hookEvent("post-tool", {
+        toolName: "apply_patch",
+        toolInput: {
+          command: [
+            "*** Begin Patch",
+            "*** Update File: src/example.ts",
+            firstHunk,
+            "+/**",
+            "+ * First function.",
+            "+ */",
+            secondHunk,
+            "+/**",
+            "+ * Second function.",
+            "+ */",
+            "*** End Patch",
+          ].join("\n"),
+        },
+      });
+      const blocks = extractAddedCommentBlocks(event);
+      const limitedPolicy = compilePolicy({
+        directives: [
+          {
+            text: "Code comments longer than three lines are not allowed",
+            source: { path: "AGENTS.md", line: 1, scope: "user" },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "claude",
+        acceptBlockingRules: true,
+      });
+
+      expect(blocks.map((block) => block.length)).toEqual([3, 3]);
+      expect(
+        evaluatePolicy({
+          policy: limitedPolicy,
+          event,
+          receipts: [],
+        }).outcome,
+      ).toBe("allow");
+    },
+  );
+
+  it("keeps context-separated comments in one patch hunk separate", () => {
+    const event = hookEvent("post-tool", {
+      toolName: "apply_patch",
+      toolInput: {
+        command: [
+          "*** Begin Patch",
+          "*** Update File: src/example.ts",
+          "@@",
+          "+// First function.",
+          " export function first() {}",
+          "+// Second function.",
+          "*** End Patch",
+        ].join("\n"),
+      },
+    });
+
+    expect(extractAddedCommentBlocks(event)).toEqual([
+      ["First function."],
+      ["Second function."],
+    ]);
+  });
+
+  it("keeps comments in separate patch files separate", () => {
+    const event = hookEvent("post-tool", {
+      toolName: "apply_patch",
+      toolInput: {
+        command: [
+          "*** Begin Patch",
+          "*** Update File: src/first.ts",
+          "@@",
+          "+// First file.",
+          "*** Update File: src/second.ts",
+          "@@",
+          "+// Second file.",
+          "*** End Patch",
+        ].join("\n"),
+      },
+    });
+
+    expect(extractAddedCommentBlocks(event)).toEqual([
+      ["First file."],
+      ["Second file."],
+    ]);
   });
 
   it("allows durable comments and ignores documentation files", () => {

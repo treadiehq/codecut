@@ -158,10 +158,17 @@ function evaluatePostTool(
       ]
         .filter(Boolean)
         .join(" ");
-      const recovery =
+      const recovery = [
         matches.length > 0
-          ? "Remove it or explain only a lasting code constraint. Do not mention prompts, instructions, tickets, or temporary files."
-          : `Shorten the comment to at most ${countLabel(lineLimit ?? 1, "line")} or keep only a lasting code constraint.`;
+          ? "Remove temporary agent context; do not mention prompts, instructions, tickets, or temporary files."
+          : "",
+        longBlocks.length > 0 && lineLimit !== undefined
+          ? `Shorten the comment to at most ${countLabel(lineLimit, "line")}.`
+          : "",
+        "Keep only lasting code constraints.",
+      ]
+        .filter(Boolean)
+        .join(" ");
       violations.push(violation(rule, evidence, recovery));
     }
   }
