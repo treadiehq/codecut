@@ -135,6 +135,7 @@ export const normalizedHookEventSchema = z.object({
   cwd: z.string().min(1),
   occurredAt: z.string().datetime(),
   toolName: z.string().optional(),
+  toolCallId: z.string().optional(),
   toolInput: z.unknown().optional(),
   toolOutput: z.unknown().optional(),
   error: z.string().optional(),
@@ -149,12 +150,26 @@ export const receiptSchema = z.object({
   id: z.string().min(1),
   timestamp: z.string().datetime(),
   sessionId: z.string().min(1),
-  kind: z.enum(["edit", "command", "decision", "acknowledgement"]),
+  kind: z.enum([
+    "edit",
+    "tool-start",
+    "tool",
+    "command-start",
+    "command",
+    "decision",
+    "acknowledgement",
+  ]),
   path: z.string().optional(),
   changedLines: z.number().int().nonnegative().optional(),
   command: z.string().optional(),
   commandFingerprint: z.string().regex(/^sha256:[a-f0-9]{12}$/).optional(),
+  stateFingerprint: z.string().regex(/^sha256:[a-f0-9]{16}$/).optional(),
+  stateBeforeFingerprint: z
+    .string()
+    .regex(/^sha256:[a-f0-9]{16}$/)
+    .optional(),
   toolName: z.string().optional(),
+  toolCallId: z.string().optional(),
   success: z.boolean().optional(),
   isTest: z.boolean().optional(),
   testRuleIds: z.array(z.string()).optional(),
@@ -182,6 +197,7 @@ export type DiffStats = {
   added: number;
   deleted: number;
   complete: boolean;
+  fingerprint?: string;
 };
 
 export type PolicyDecision = {

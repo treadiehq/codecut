@@ -34,18 +34,25 @@ export async function readSessionReceipts(
   }
 
   const receipts: Receipt[] = [];
-  for (const line of content.split(/\r?\n/)) {
+  for (const [index, line] of content.split(/\r?\n/).entries()) {
     if (line.trim().length === 0) {
       continue;
     }
 
     try {
       const result = receiptSchema.safeParse(JSON.parse(line));
-      if (result.success && result.data.sessionId === sessionId) {
+      if (!result.success) {
+        throw new Error(result.error.message);
+      }
+      if (result.data.sessionId === sessionId) {
         receipts.push(result.data);
       }
-    } catch {
-      // A partial or malformed line must not disable enforcement for valid lines.
+    } catch (error) {
+      throw new Error(
+        `Event state is malformed at ${eventsFile}:${index + 1}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
   }
 

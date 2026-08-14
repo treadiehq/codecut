@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentName } from "../core/schema.js";
+import type { AgentName, HookStage } from "../core/schema.js";
 import { installClaudeHooks } from "./claude.js";
 import { installCodexHooks } from "./codex.js";
 import { installCursorHooks } from "./cursor.js";
@@ -56,6 +56,7 @@ export async function installUserHooks(
 export async function hasProjectHooks(
   projectRoot: string,
   agent: AgentName,
+  stage?: HookStage,
 ): Promise<boolean> {
   if (agent === "unknown") {
     return false;
@@ -65,10 +66,70 @@ export async function hasProjectHooks(
       path.join(projectRoot, HOOK_SETTINGS_FILES[agent]),
       "utf8",
     );
-    return (
-      (raw.includes("codecut") || raw.includes("papercut")) &&
-      raw.includes(`hook --agent ${agent}`)
-    );
+    const parsed = JSON.parse(raw) as unknown;
+    const eventNames: Record<HookAgent, Partial<Record<HookStage, string>>> = {
+      claude: {
+        "pre-tool": "PreToolUse",
+        "post-tool": "PostToolUse",
+        "post-tool-failure": "PostToolUseFailure",
+        stop: "Stop",
+      },
+      cursor: {
+        "pre-tool": "preToolUse",
+        "post-tool": "postToolUse",
+        "post-tool-failure": "postToolUseFailure",
+        "agent-response": "afterAgentResponse",
+        stop: "stop",
+      },
+      codex: {
+        "pre-tool": "PreToolUse",
+        "post-tool": "PostToolUse",
+        stop: "Stop",
+      },
+      polytoken: {
+        "pre-tool": "pre_tool_use",
+        "post-tool": "post_tool_use",
+        "post-tool-failure": "post_tool_use_failure",
+        "agent-response": "post_model_turn",
+        stop: "stop",
+      },
+    };
+    const includesAgentHook = (value: unknown): boolean => {
+      const serialized = JSON.stringify(value);
+      return (
+        (serialized.includes("codecut") || serialized.includes("papercut")) &&
+        serialized.includes(`hook --agent ${agent}`)
+      );
+    };
+    if (!stage) {
+      return includesAgentHook(parsed);
+    }
+    const eventName = eventNames[agent][stage];
+    if (!eventName) {
+      return false;
+    }
+    if (agent === "polytoken") {
+      return (
+        Array.isArray(parsed) &&
+        parsed.some(
+          (entry) =>
+            entry &&
+            typeof entry === "object" &&
+            !Array.isArray(entry) &&
+            (entry as Record<string, unknown>).event === eventName &&
+            includesAgentHook(entry),
+        )
+      );
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return false;
+    }
+    const hooks = (parsed as Record<string, unknown>).hooks;
+    if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
+      return false;
+    }
+    const handlers = (hooks as Record<string, unknown>)[eventName];
+    return Array.isArray(handlers) && handlers.some(includesAgentHook);
   } catch {
     return false;
   }

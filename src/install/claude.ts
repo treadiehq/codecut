@@ -25,7 +25,7 @@ function hookDefinition(event: HookEventName, command: string): JsonObject {
       {
         type: "command",
         command,
-        timeout: event === "Stop" ? 10 : 5,
+        timeout: event === "Stop" ? 30 : 15,
       },
     ],
   };

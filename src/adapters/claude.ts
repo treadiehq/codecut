@@ -56,17 +56,41 @@ export function normalizeClaudeEvent(
   if (!eventName) {
     throw new Error('Hook input is missing "hook_event_name".');
   }
+  const sessionId = stringValue(
+    input,
+    "session_id",
+    "conversation_id",
+    "sessionId",
+  );
+  if (!sessionId) {
+    throw new Error('Hook input is missing a stable session identifier.');
+  }
+  const workspaceRoots = input.workspace_roots;
+  const firstWorkspaceRoot =
+    Array.isArray(workspaceRoots) &&
+    typeof workspaceRoots[0] === "string" &&
+    workspaceRoots[0].length > 0
+      ? workspaceRoots[0]
+      : undefined;
 
   return normalizedHookEventSchema.parse({
     agent,
     stage: stageForEvent(eventName),
-    sessionId:
-      stringValue(input, "session_id", "conversation_id", "sessionId") ??
-      "unknown-session",
-    cwd: stringValue(input, "cwd", "workspace_root") ?? process.cwd(),
+    sessionId,
+    cwd:
+      stringValue(input, "cwd", "workspace_root") ??
+      firstWorkspaceRoot ??
+      process.cwd(),
     occurredAt:
       stringValue(input, "timestamp", "occurred_at") ?? now.toISOString(),
     toolName: stringValue(input, "tool_name", "toolName"),
+    toolCallId: stringValue(
+      input,
+      "tool_use_id",
+      "tool_call_id",
+      "toolCallId",
+      "call_id",
+    ),
     toolInput: input.tool_input ?? input.toolInput,
     toolOutput:
       input.tool_response ??

@@ -1,7 +1,10 @@
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { discoverDirectives } from "../src/core/discovery.js";
+import {
+  discoverDirectives,
+  parseDirectives,
+} from "../src/core/discovery.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -77,5 +80,69 @@ describe("directive discovery", () => {
     expect(result.directives.some((item) => item.text.includes("example"))).toBe(
       false,
     );
+  });
+
+  it("marks directives under conditional headings as conditional", async () => {
+    const directory = await mkdtemp(
+      path.join(process.cwd(), ".codecut-discovery-scope-"),
+    );
+    temporaryDirectories.push(directory);
+    await writeFile(
+      path.join(directory, "CLAUDE.md"),
+      [
+        "# Project",
+        "## When editing release docs",
+        "- All unit tests must pass",
+        "- Use local tests",
+        "## Global checks",
+        "- All unit tests must pass",
+        "- Treat warnings as errors",
+        "When deploying",
+        "--------------",
+        "- Keep changes small and focused",
+      ].join("\n"),
+    );
+
+    const result = await discoverDirectives(directory);
+    const scoped = result.directives.find((item) =>
+      item.text.includes("unit tests"),
+    );
+    const global = result.directives.find((item) =>
+      item.text.includes("warnings"),
+    );
+    const uniqueScoped = result.directives.find((item) =>
+      item.text.includes("local tests"),
+    );
+    const setextScoped = result.directives.find((item) =>
+      item.text.includes("changes small"),
+    );
+
+    expect(scoped?.source.conditional).toBe(false);
+    expect(uniqueScoped?.source.conditional).toBe(true);
+    expect(setextScoped?.source.conditional).toBe(true);
+    expect(global?.source.conditional).toBe(false);
+    expect(
+      result.directives.filter((item) => item.text.includes("unit tests")),
+    ).toHaveLength(1);
+  });
+
+  it("does not treat a list item before a thematic break as a heading", () => {
+    const directives = parseDirectives(
+      [
+        "- Use snapshots when needed",
+        "---",
+        "- All unit tests must pass",
+        "- Run tests locally",
+      ].join("\n"),
+      { path: "CLAUDE.md", scope: "project", conditional: false },
+    );
+
+    expect(
+      directives.find((item) => item.text.includes("unit tests"))?.source
+        .conditional,
+    ).toBe(false);
+    expect(
+      directives.some((item) => item.text === "Run tests locally"),
+    ).toBe(true);
   });
 });

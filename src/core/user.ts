@@ -73,8 +73,15 @@ export async function discoverUserDirectives(configDirectory: string): Promise<{
   let content: string;
   try {
     content = await readFile(rulesFile, "utf8");
-  } catch {
-    return { directives: [], sources: [] };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return { directives: [], sources: [] };
+    }
+    throw error;
   }
 
   return {
@@ -93,8 +100,15 @@ export async function loadUserPolicy(
   let raw: string;
   try {
     raw = await readFile(userPolicyPath(configDirectory), "utf8");
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return undefined;
+    }
+    throw error;
   }
   return parsePolicyDocument(raw);
 }

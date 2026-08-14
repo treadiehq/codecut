@@ -10,6 +10,8 @@ const ROOT_INSTRUCTION_FILES = [
 
 const DIRECTIVE_LANGUAGE =
   /\b(?:always|never|must|should|do not|don't|cannot|can't|use|avoid|prefer|favor|keep|verify|treat|require)\b/i;
+const CONDITIONAL_SCOPE_LANGUAGE =
+  /^(?:for|while)\b|\b(?:if|when|whenever|unless|except)\b|\bonly\s+(?:if|when|for|in|on|during)\b/i;
 const SKIPPED_DIRECTORIES = new Set([
   ".git",
   ".codecut",
@@ -107,7 +109,8 @@ function cleanDirective(line: string): string | undefined {
     withoutListMarker.length < 6 ||
     withoutListMarker.startsWith("```") ||
     withoutListMarker === "---" ||
-    !DIRECTIVE_LANGUAGE.test(withoutListMarker)
+    (!DIRECTIVE_LANGUAGE.test(withoutListMarker) &&
+      !/^run\b/i.test(withoutListMarker))
   ) {
     return undefined;
   }
@@ -122,12 +125,12 @@ export function parseDirectives(
     scope: "project" | "user";
     conditional: boolean;
   },
-  seen: Set<string> = new Set(),
 ): Directive[] {
   const directives: Directive[] = [];
   const lines = content.split(/\r?\n/);
   let inCodeFence = false;
   let inFrontmatter = lines[0]?.trim() === "---";
+  const conditionalHeadings = new Map<number, boolean>();
 
   lines.forEach((line, index) => {
     if (index === 0 && inFrontmatter) {
@@ -148,28 +151,65 @@ export function parseDirectives(
       return;
     }
 
+    const atxHeading = line.match(/^\s*(#{1,6})\s+(.+)$/);
+    const setextUnderline = lines[index + 1]?.trim();
+    const setextHeading =
+      line.trim().length > 0 &&
+      !/^\s*(?:[-*+]|\d+[.)])\s+/.test(line) &&
+      /^(?:=+|-+)$/.test(setextUnderline ?? "")
+        ? {
+            level: setextUnderline?.startsWith("=") ? 1 : 2,
+            text: line.trim(),
+          }
+        : undefined;
+    const headingLevel = atxHeading?.[1]?.length ?? setextHeading?.level;
+    const headingText = atxHeading?.[2] ?? setextHeading?.text;
+    if (headingLevel && headingText) {
+      for (const existingLevel of conditionalHeadings.keys()) {
+        if (existingLevel >= headingLevel) {
+          conditionalHeadings.delete(existingLevel);
+        }
+      }
+      conditionalHeadings.set(
+        headingLevel,
+        CONDITIONAL_SCOPE_LANGUAGE.test(headingText),
+      );
+    }
+
     const text = cleanDirective(line);
     if (!text) {
       return;
     }
 
-    const key = text.toLowerCase();
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
     directives.push({
       text,
       source: {
         path: source.path,
         line: index + 1,
         scope: source.scope,
-        conditional: source.conditional,
+        conditional:
+          source.conditional ||
+          [...conditionalHeadings.values()].some(Boolean),
       },
     });
   });
 
-  return directives;
+  return deduplicateDirectives(directives);
+}
+
+function deduplicateDirectives(directives: Directive[]): Directive[] {
+  const byText = new Map<string, Directive>();
+  for (const directive of directives) {
+    const key = directive.text.toLowerCase();
+    const existing = byText.get(key);
+    if (
+      !existing ||
+      (existing.source.conditional && !directive.source.conditional)
+    ) {
+      byText.set(key, directive);
+    }
+  }
+  return [...byText.values()];
 }
 
 export async function discoverDirectives(cwd: string): Promise<{
@@ -178,7 +218,6 @@ export async function discoverDirectives(cwd: string): Promise<{
 }> {
   const files = await discoverInstructionFiles(cwd);
   const directives: Directive[] = [];
-  const seen = new Set<string>();
 
   for (const absolutePath of files) {
     const content = await readFile(absolutePath, "utf8");
@@ -205,13 +244,12 @@ export async function discoverDirectives(cwd: string): Promise<{
       ...parseDirectives(
         content,
         { path: relativePath, scope: "project", conditional },
-        seen,
       ),
     );
   }
 
   return {
-    directives,
+    directives: deduplicateDirectives(directives),
     sources: files.map((file) => path.relative(cwd, file)),
   };
 }

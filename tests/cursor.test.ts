@@ -66,6 +66,7 @@ describe("native Cursor integration", () => {
 
     expect(event).toMatchObject({
       stage: "agent-response",
+      cwd: "/tmp/project",
       lastAssistantMessage:
         "The larger scope is necessary because this is an initial migration.",
     });

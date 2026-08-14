@@ -110,6 +110,10 @@ describe("project hook detection", () => {
     );
 
     expect(await hasProjectHooks(projectRoot, "cursor")).toBe(true);
+    expect(await hasProjectHooks(projectRoot, "cursor", "stop")).toBe(true);
+    expect(
+      await hasProjectHooks(projectRoot, "cursor", "pre-tool"),
+    ).toBe(false);
     expect(await hasProjectHooks(projectRoot, "claude")).toBe(false);
     expect(await hasProjectHooks(projectRoot, "unknown")).toBe(false);
   });

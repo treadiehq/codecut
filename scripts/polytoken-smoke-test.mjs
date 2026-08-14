@@ -117,6 +117,11 @@ try {
   );
 
   hook(runtime, fixture, "polytoken-completion", {
+    event: "pre_tool_use",
+    tool_name: "shell",
+    input: { command: "npm test" },
+  });
+  hook(runtime, fixture, "polytoken-completion", {
     event: "post_tool_use",
     tool_name: "shell",
     input: { command: "npm test" },

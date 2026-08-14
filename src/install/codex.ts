@@ -51,7 +51,7 @@ function hookDefinition(
         type: "command",
         command: commands.command,
         commandWindows: commands.commandWindows,
-        timeout: event === "Stop" ? 10 : 5,
+        timeout: event === "Stop" ? 30 : 15,
         statusMessage: "Checking Codecut policy",
       },
     ],

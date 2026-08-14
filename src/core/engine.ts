@@ -201,10 +201,39 @@ function evaluateStop(
   const violations: RuleViolation[] = [];
   const edits = receipts.filter((receipt) => receipt.kind === "edit");
   const latestEdit = latest(edits)?.timestamp;
-  const hasChanges = Boolean(latestEdit || (diffStats && diffStats.files > 0));
+  const workingStateChanged = Boolean(
+    diffStats?.fingerprint &&
+      receipts.some(
+        (receipt) =>
+          ((receipt.kind === "command" ||
+            receipt.kind === "command-start" ||
+            receipt.kind === "tool" ||
+            receipt.kind === "tool-start") &&
+            receipt.stateFingerprint !== undefined &&
+            receipt.stateFingerprint !== diffStats.fingerprint) ||
+          ((receipt.kind === "command" || receipt.kind === "tool") &&
+            receipt.stateFingerprint !== undefined &&
+            receipt.stateBeforeFingerprint === undefined) ||
+          ((receipt.kind === "command" || receipt.kind === "tool") &&
+            receipt.stateBeforeFingerprint !== undefined &&
+            receipt.stateBeforeFingerprint !== diffStats.fingerprint),
+      ),
+  );
+  const hasChanges = Boolean(
+    latestEdit ||
+      (diffStats && diffStats.files > 0) ||
+      workingStateChanged,
+  );
   const commandsAfterEdit = receipts.filter(
     (receipt) => receipt.kind === "command" && after(receipt, latestEdit),
   );
+  const commandsForCurrentState = diffStats?.fingerprint
+    ? commandsAfterEdit.filter(
+        (receipt) =>
+          receipt.stateFingerprint === diffStats.fingerprint &&
+          receipt.stateBeforeFingerprint === receipt.stateFingerprint,
+      )
+    : commandsAfterEdit;
 
   for (const rule of policy.rules) {
     if (!rule.enabled || rule.mode === "off") {
@@ -213,7 +242,7 @@ function evaluateStop(
 
     if (rule.type === "require-passing-tests" && hasChanges) {
       const latestTest = latest(
-        commandsAfterEdit.filter(
+        commandsForCurrentState.filter(
           (receipt) => matchesTestRule(receipt, rule),
         ),
       );
@@ -233,7 +262,7 @@ function evaluateStop(
 
     if (rule.type === "warnings-as-errors" && hasChanges) {
       const latestVerification = latest(
-        commandsAfterEdit.filter(
+        commandsForCurrentState.filter(
           (receipt) =>
             receipt.isVerification ||
             matchesAny(receipt.command ?? "", rule.commandPatterns),
@@ -256,7 +285,7 @@ function evaluateStop(
 
     if (rule.type === "local-testing" && hasChanges) {
       const latestTest = latest(
-        commandsAfterEdit.filter(
+        commandsForCurrentState.filter(
           (receipt) => matchesTestRule(receipt, rule),
         ),
       );
@@ -276,7 +305,7 @@ function evaluateStop(
 
     if (rule.type === "verification-evidence" && hasChanges) {
       const latestVerification = latest(
-        commandsAfterEdit.filter(
+        commandsForCurrentState.filter(
           (receipt) =>
             receipt.isVerification ||
             matchesAny(receipt.command ?? "", rule.commandPatterns),

@@ -2,6 +2,7 @@ import {
   formatClaudeOutput,
   normalizeClaudeEvent,
 } from "./claude.js";
+import { toolOutputFailed } from "../core/events.js";
 import type {
   NormalizedHookEvent,
   PolicyDecision,
@@ -15,19 +16,6 @@ function record(value: unknown): JsonRecord | undefined {
     : undefined;
 }
 
-function failedToolResponse(value: unknown): boolean {
-  const output = record(value);
-  const exitCode = output?.exit_code ?? output?.exitCode ?? output?.code;
-  if (typeof exitCode === "number") {
-    return exitCode !== 0;
-  }
-  const serialized =
-    typeof value === "string" ? value : JSON.stringify(value ?? "");
-  return /(?:process exited with code|exit(?:ed)? code|exit_status)\D*[1-9]\d*/i.test(
-    serialized,
-  );
-}
-
 export function normalizeCodexEvent(
   raw: unknown,
   now = new Date(),
@@ -35,7 +23,7 @@ export function normalizeCodexEvent(
   const event = normalizeClaudeEvent(raw, "codex", now);
   if (
     event.stage === "post-tool" &&
-    failedToolResponse(event.toolOutput)
+    toolOutputFailed(event.toolOutput)
   ) {
     return {
       ...event,

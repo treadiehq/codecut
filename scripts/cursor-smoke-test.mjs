@@ -131,6 +131,13 @@ try {
   );
 
   hook(runtime, fixture, {
+    hook_event_name: "preToolUse",
+    conversation_id: "cursor-completion",
+    cwd: fixture,
+    tool_name: "Shell",
+    tool_input: { command: "npm test" },
+  });
+  hook(runtime, fixture, {
     hook_event_name: "postToolUse",
     conversation_id: "cursor-completion",
     cwd: fixture,
@@ -167,6 +174,13 @@ try {
       ).join("\n"),
     },
     tool_output: JSON.stringify({ status: "updated" }),
+  });
+  hook(runtime, fixture, {
+    hook_event_name: "preToolUse",
+    conversation_id: "cursor-acknowledgement",
+    cwd: fixture,
+    tool_name: "Shell",
+    tool_input: { command: "npm test" },
   });
   hook(runtime, fixture, {
     hook_event_name: "postToolUse",

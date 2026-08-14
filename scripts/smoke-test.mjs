@@ -163,6 +163,14 @@ try {
   );
 
   hook(codecut, fixture, {
+    hook_event_name: "PreToolUse",
+    session_id: "smoke-session",
+    cwd: fixture,
+    timestamp: "2026-01-01T00:00:02.500Z",
+    tool_name: "Bash",
+    tool_input: { command: "npm test" },
+  });
+  hook(codecut, fixture, {
     hook_event_name: "PostToolUse",
     session_id: "smoke-session",
     cwd: fixture,
@@ -199,6 +207,13 @@ try {
       ).join("\n"),
     },
     tool_response: "updated",
+  });
+  hook(codecut, fixture, {
+    hook_event_name: "PreToolUse",
+    session_id: "acknowledgement-session",
+    cwd: fixture,
+    tool_name: "Bash",
+    tool_input: { command: "npm test" },
   });
   hook(codecut, fixture, {
     hook_event_name: "PostToolUse",

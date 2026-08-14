@@ -1,0 +1,116 @@
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { afterEach, describe, expect, it } from "vitest";
+import { workingTreeFingerprint } from "../src/core/git.js";
+
+const execFileAsync = promisify(execFile);
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) =>
+      rm(directory, { recursive: true, force: true }),
+    ),
+  );
+});
+
+describe("working-tree fingerprints", () => {
+  it("changes when untracked file content changes and restores after removal", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-git-state-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+
+    const clean = await workingTreeFingerprint(directory);
+    const filePath = path.join(directory, "example.ts");
+    await writeFile(filePath, "export const value = 1;\n");
+    const firstEdit = await workingTreeFingerprint(directory);
+    await writeFile(filePath, "export const value = 2;\n");
+    const secondEdit = await workingTreeFingerprint(directory);
+    await rm(filePath);
+    const restored = await workingTreeFingerprint(directory);
+
+    expect(clean).toMatch(/^sha256:[a-f0-9]{16}$/);
+    expect(firstEdit).not.toBe(clean);
+    expect(secondEdit).not.toBe(firstEdit);
+    expect(restored).toBe(clean);
+  });
+
+  it("does not change when identical content is staged or committed", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-git-metadata-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    await writeFile(
+      path.join(directory, "example.ts"),
+      "export const value = 1;\n",
+    );
+
+    const untracked = await workingTreeFingerprint(directory);
+    await execFileAsync("git", ["add", "example.ts"], { cwd: directory });
+    const staged = await workingTreeFingerprint(directory);
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+      { cwd: directory },
+    );
+    const committed = await workingTreeFingerprint(directory);
+
+    expect(staged).toBe(untracked);
+    expect(committed).toBe(untracked);
+  });
+
+  it("tracks content when the policy root is below the Git root", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-nested-git-state-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    const projectRoot = path.join(directory, "packages", "app");
+    await mkdir(projectRoot, { recursive: true });
+    const filePath = path.join(projectRoot, "example.ts");
+    await writeFile(filePath, "export const value = 1;\n");
+
+    const first = await workingTreeFingerprint(projectRoot);
+    await writeFile(filePath, "export const value = 2;\n");
+    const second = await workingTreeFingerprint(projectRoot);
+
+    expect(second).not.toBe(first);
+  });
+
+  it("fingerprints non-Git projects without including Codecut state", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-filesystem-state-"),
+    );
+    temporaryDirectories.push(directory);
+    const filePath = path.join(directory, "example.ts");
+    await writeFile(filePath, "export const value = 1;\n");
+    const first = await workingTreeFingerprint(directory);
+    await writeFile(filePath, "export const value = 2;\n");
+    const second = await workingTreeFingerprint(directory);
+    await mkdir(path.join(directory, ".codecut"), { recursive: true });
+    await writeFile(
+      path.join(directory, ".codecut", "events.jsonl"),
+      "changing runtime state\n",
+    );
+    const withState = await workingTreeFingerprint(directory);
+
+    expect(first).toMatch(/^sha256:[a-f0-9]{16}$/);
+    expect(second).not.toBe(first);
+    expect(withState).toBe(second);
+  });
+});

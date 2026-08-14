@@ -73,14 +73,19 @@ export function normalizePolytokenEvent(
       'Polytoken hook input is missing an event name and POLYTOKEN_HOOK_EVENT is not set.',
     );
   }
+  const sessionId =
+    stringValue(input, "session_id", "sessionId") ??
+    environment.POLYTOKEN_SESSION_ID;
+  if (!sessionId) {
+    throw new Error(
+      "Polytoken hook input is missing a stable session identifier.",
+    );
+  }
 
   return normalizedHookEventSchema.parse({
     agent: "polytoken",
     stage: stageForEvent(eventName),
-    sessionId:
-      stringValue(input, "session_id", "sessionId") ??
-      environment.POLYTOKEN_SESSION_ID ??
-      "unknown-session",
+    sessionId,
     cwd:
       stringValue(input, "cwd", "project_dir", "project_path") ??
       environment.POLYTOKEN_PROJECT_DIR ??
@@ -91,6 +96,13 @@ export function normalizePolytokenEvent(
     toolName:
       stringValue(input, "tool_name", "toolName", "matcher_subject") ??
       environment.POLYTOKEN_HOOK_MATCHER_SUBJECT,
+    toolCallId: stringValue(
+      input,
+      "tool_use_id",
+      "tool_call_id",
+      "toolCallId",
+      "call_id",
+    ),
     toolInput: input.input ?? input.tool_input ?? input.toolInput,
     toolOutput:
       input.output ??

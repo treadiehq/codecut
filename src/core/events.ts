@@ -81,6 +81,126 @@ function stringifyOutput(value: unknown, depth = 0): string {
   return "";
 }
 
+function parsedExitCode(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return value;
+  }
+  if (typeof value === "string" && /^-?\d+$/.test(value.trim())) {
+    return Number.parseInt(value, 10);
+  }
+  return undefined;
+}
+
+export function toolOutputFailed(
+  value: unknown,
+  depth = 0,
+  allowText = true,
+): boolean {
+  if (depth > 5 || value === undefined || value === null) {
+    return false;
+  }
+  if (typeof value === "string") {
+    if (!allowText) {
+      return false;
+    }
+    const trimmed = value.trim();
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        return toolOutputFailed(JSON.parse(trimmed), depth + 1, allowText);
+      } catch {
+        // Fall through to the textual exit-status check.
+      }
+    }
+    return /(?:process exited with code|exit(?:ed)? code|exit_status)\D*[1-9]\d*/i.test(
+      value,
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) =>
+      toolOutputFailed(item, depth + 1, allowText),
+    );
+  }
+  if (typeof value !== "object") {
+    return false;
+  }
+
+  const output = value as Record<string, unknown>;
+  let explicitlySuccessful = false;
+  for (const key of [
+    "exit_code",
+    "exitCode",
+    "exit_status",
+    "exitStatus",
+  ]) {
+    const exitCode = parsedExitCode(output[key]);
+    if (exitCode !== undefined && exitCode !== 0) {
+      return true;
+    }
+    if (exitCode === 0) {
+      explicitlySuccessful = true;
+    }
+  }
+  const genericCode = parsedExitCode(output.code);
+  if (
+    genericCode !== undefined &&
+    ("stdout" in output || "stderr" in output || "signal" in output)
+  ) {
+    if (genericCode !== 0) {
+      return true;
+    }
+    explicitlySuccessful = true;
+  }
+  if (
+    output.success === false ||
+    output.ok === false ||
+    output.failed === true ||
+    output.is_error === true ||
+    output.isError === true ||
+    output.interrupted === true
+  ) {
+    return true;
+  }
+  if (
+    output.success === true ||
+    output.ok === true ||
+    output.failed === false ||
+    output.is_error === false ||
+    output.isError === false
+  ) {
+    explicitlySuccessful = true;
+  }
+  if (
+    typeof output.status === "string" &&
+    /^(?:failed|failure|error)$/i.test(output.status.trim())
+  ) {
+    return true;
+  }
+  if (
+    typeof output.status === "string" &&
+    /^(?:completed|passed|success|succeeded)$/i.test(output.status.trim())
+  ) {
+    explicitlySuccessful = true;
+  }
+  const nestedStructuralFailure = Object.values(output).some(
+    (nested) =>
+      typeof nested === "object" &&
+      nested !== null &&
+      toolOutputFailed(nested, depth + 1, false),
+  );
+  if (nestedStructuralFailure) {
+    return true;
+  }
+  if (explicitlySuccessful) {
+    return false;
+  }
+  return Object.values(output).some((nested) =>
+    toolOutputFailed(nested, depth + 1, allowText),
+  );
+}
+
 function commandFingerprint(command: string): string {
   const digest = createHash("sha256").update(command).digest("hex").slice(0, 12);
   return `sha256:${digest}`;
@@ -240,11 +360,46 @@ export function deriveReceipts(
   policy: Policy,
   event: NormalizedHookEvent,
 ): Receipt[] {
+  const command = extractCommand(event.toolInput);
+  if (event.stage === "pre-tool") {
+    if (!command && !isCommandTool(event.toolName)) {
+      return event.toolName
+        ? [
+            {
+              version: 1,
+              id: randomUUID(),
+              timestamp: event.occurredAt,
+              sessionId: event.sessionId,
+              kind: "tool-start",
+              toolName: event.toolName,
+              toolCallId: event.toolCallId,
+            },
+          ]
+        : [];
+    }
+    const rawCommand = command ?? event.toolName ?? "unknown command";
+    return [
+      {
+        version: 1,
+        id: randomUUID(),
+        timestamp: event.occurredAt,
+        sessionId: event.sessionId,
+        kind: "command-start",
+        commandFingerprint: commandFingerprint(rawCommand),
+        toolName: event.toolName,
+        toolCallId: event.toolCallId,
+      },
+    ];
+  }
   if (!["post-tool", "post-tool-failure"].includes(event.stage)) {
     return [];
   }
 
   const receipts: Receipt[] = [];
+  const toolSucceeded =
+    event.stage === "post-tool" &&
+    !event.error &&
+    !toolOutputFailed(event.toolOutput);
   if (isEditTool(event.toolName) && event.stage === "post-tool") {
     const paths = extractEditedPaths(event);
     const changedLines = estimatedChangedLines(event);
@@ -258,13 +413,27 @@ export function deriveReceipts(
         path: editedPath,
         changedLines,
         toolName: event.toolName,
+        toolCallId: event.toolCallId,
       });
     }
   }
 
-  const command = extractCommand(event.toolInput);
   if (!command && !isCommandTool(event.toolName)) {
-    return receipts;
+    if (receipts.length > 0 || !event.toolName) {
+      return receipts;
+    }
+    return [
+      {
+        version: 1,
+        id: randomUUID(),
+        timestamp: event.occurredAt,
+        sessionId: event.sessionId,
+        kind: "tool",
+        toolName: event.toolName,
+        toolCallId: event.toolCallId,
+        success: toolSucceeded,
+      },
+    ];
   }
 
   const verificationPatterns = policy.rules
@@ -308,7 +477,6 @@ export function deriveReceipts(
     return [];
   });
   const isTest = testRuleIds.length > 0;
-
   receipts.push({
     version: 1,
     id: randomUUID(),
@@ -317,7 +485,8 @@ export function deriveReceipts(
     kind: "command",
     commandFingerprint: commandFingerprint(rawCommand),
     toolName: event.toolName,
-    success: event.stage === "post-tool",
+    toolCallId: event.toolCallId,
+    success: toolSucceeded,
     isTest,
     testRuleIds,
     isVerification,

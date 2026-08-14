@@ -97,6 +97,18 @@ function parseCommentLineLimit(normalized: string): number | undefined {
   return undefined;
 }
 
+function hasInlineScope(normalized: string): boolean {
+  return /^(?:for|while)\b|\b(?:if|when|whenever|unless|except)\b|\bonly\s+(?:if|when|for|in|on|during)\b|\bfor\s+(?:release|production|generated|documentation|docs?|migrations?|windows|linux|macos|ci)\b/.test(
+    normalized,
+  );
+}
+
+function hasNegation(normalized: string): boolean {
+  return /\b(?:not|never|do not|don't|cannot|can't|must not|should not|need not)\b/.test(
+    normalized,
+  );
+}
+
 function classifyDirective(
   directive: Directive,
   acceptBlockingRules: boolean,
@@ -121,26 +133,60 @@ function classifyDirective(
     /(?:treat|consider)\s+warnings?.*(?:as\s+)?errors?|fail(?:ure)?\s+on\s+warnings?|\bno\s+warnings?\b/i.test(
       normalized,
     );
-  const blockingRule = warningRule
-    ? {
-        type: "warnings-as-errors" as const,
-        commandPatterns: DEFAULT_VERIFICATION_COMMAND_PATTERNS,
-        warningPatterns: DEFAULT_WARNING_PATTERNS,
-      }
-    : /\b(?:all\s+)?(?:unit\s+)?tests?\s+(?:must\s+)?pass\b/.test(normalized)
+  const passingTestRule =
+    /\b(?:all\s+)?(?:unit\s+)?tests?\s+(?:must\s+)?pass\b/.test(normalized);
+  const localTestRule =
+    /\blocal(?:ly)?\b.*\btest|\btest.*\blocal(?:ly)?\b/.test(normalized);
+  const blastRadiusRule =
+    /\bblast\s+radius\b|\bhigh[\s-]+confidence\b|\bchanges?\b.*\b(?:small|focused)\b/.test(
+      normalized,
+    );
+  const verificationRule =
+    /\bverify\b|\bdon't assume\b|\bdo not assume\b/.test(normalized);
+  const commentRule = /\bcomments?\b/.test(normalized);
+  const categoryCount = [
+    warningRule,
+    passingTestRule,
+    localTestRule,
+    blastRadiusRule,
+    verificationRule,
+    commentRule,
+  ].filter(Boolean).length;
+  if (categoryCount > 1 && /\b(?:and|or|but)\b/.test(normalized)) {
+    return {
+      id: ruleId("advisory", directive.text),
+      type: "advisory",
+      directive: directive.text,
+      source: directive.source,
+      mode: "warn",
+      confirmed: true,
+      enabled: true,
+    };
+  }
+  const unsafeForBlockingInference =
+    hasNegation(normalized) || hasInlineScope(normalized);
+  const blockingRule = unsafeForBlockingInference
+    ? undefined
+    : warningRule
       ? {
-          type: "require-passing-tests" as const,
-          commandPatterns: DEFAULT_TEST_COMMAND_PATTERNS,
-          testOutputPatterns: DEFAULT_TEST_OUTPUT_PATTERNS,
+          type: "warnings-as-errors" as const,
+          commandPatterns: DEFAULT_VERIFICATION_COMMAND_PATTERNS,
+          warningPatterns: DEFAULT_WARNING_PATTERNS,
         }
-      : /\blocal(?:ly)?\b.*\btest|\btest.*\blocal(?:ly)?\b/.test(normalized)
+      : passingTestRule
         ? {
-            type: "local-testing" as const,
-            testCommandPatterns: DEFAULT_TEST_COMMAND_PATTERNS,
-            remoteCommandPatterns: DEFAULT_REMOTE_COMMAND_PATTERNS,
-            remoteToolPatterns: DEFAULT_REMOTE_TOOL_PATTERNS,
+            type: "require-passing-tests" as const,
+            commandPatterns: DEFAULT_TEST_COMMAND_PATTERNS,
+            testOutputPatterns: DEFAULT_TEST_OUTPUT_PATTERNS,
           }
-        : undefined;
+        : localTestRule
+          ? {
+              type: "local-testing" as const,
+              testCommandPatterns: DEFAULT_TEST_COMMAND_PATTERNS,
+              remoteCommandPatterns: DEFAULT_REMOTE_COMMAND_PATTERNS,
+              remoteToolPatterns: DEFAULT_REMOTE_TOOL_PATTERNS,
+            }
+          : undefined;
 
   if (blockingRule) {
     return {
@@ -155,9 +201,8 @@ function classifyDirective(
   }
 
   if (
-    /\bblast\s+radius\b|\bhigh[\s-]+confidence\b|\bchanges?\b.*\b(?:small|focused)\b/.test(
-      normalized,
-    )
+    !unsafeForBlockingInference &&
+    blastRadiusRule
   ) {
     return {
       id: ruleId("blast-radius", directive.text),
@@ -172,7 +217,15 @@ function classifyDirective(
     };
   }
 
-  if (/\bverify\b|\bdon't assume\b|\bdo not assume\b/.test(normalized)) {
+  const negatedVerification =
+    /\b(?:do not|don't|never|need not|not required to|should not|must not|cannot|can't)\s+verify\b/.test(
+      normalized,
+    );
+  if (
+    !hasInlineScope(normalized) &&
+    ((!negatedVerification && /\bverify\b/.test(normalized)) ||
+      /\bdon't assume\b|\bdo not assume\b/.test(normalized))
+  ) {
     return {
       id: ruleId("verification-evidence", directive.text),
       type: "verification-evidence",
@@ -185,7 +238,15 @@ function classifyDirective(
     };
   }
 
-  if (/\bcomments?\b/.test(normalized)) {
+  const permissiveCommentGuidance =
+    /\bcomments?\b.*\b(?:may|can|need not|do not need|don't need|not required)\b|\b(?:allow|ignore|exclude|except)\b.*\bcomments?\b/.test(
+      normalized,
+    );
+  if (
+    /\bcomments?\b/.test(normalized) &&
+    !hasInlineScope(normalized) &&
+    !permissiveCommentGuidance
+  ) {
     const maxCommentLines = parseCommentLineLimit(normalized);
     return {
       id: ruleId("comment-quality", directive.text),

@@ -23,9 +23,18 @@ import {
   deriveAcknowledgementReceipts,
   deriveReceipts,
 } from "../core/events.js";
-import { findGitRoot, inspectDiff } from "../core/git.js";
+import {
+  findGitRoot,
+  inspectDiff,
+  workingTreeFingerprint,
+} from "../core/git.js";
 import { eventsPath, findProjectRoot } from "../core/project.js";
-import type { AgentName, Policy } from "../core/schema.js";
+import type {
+  AgentName,
+  NormalizedHookEvent,
+  Policy,
+  Receipt,
+} from "../core/schema.js";
 import {
   loadEnforcementPolicy,
   loadUserPolicy,
@@ -43,12 +52,91 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function isNativeStopEvent(eventName: string | undefined): boolean {
+  return eventName?.toLowerCase() === "stop";
+}
+
+function hookErrorOutput(
+  agent: AgentName,
+  event: NormalizedHookEvent | undefined,
+  nativeEventName: string | undefined,
+  message: string,
+): Record<string, unknown> {
+  const detail = `Codecut could not check this action: ${message}`;
+  const recovery =
+    "Repair Codecut state, then run `codecut status` and `codecut test`.";
+  const stopFailure =
+    event === undefined ||
+    event.stage === "stop" ||
+    isNativeStopEvent(nativeEventName);
+
+  if (stopFailure) {
+    const reason = `${detail} ${recovery}`;
+    if (agent === "cursor") {
+      return { followup_message: reason };
+    }
+    if (agent === "polytoken") {
+      return { outcome: "continue", reason };
+    }
+    return {
+      decision: "block",
+      reason,
+      systemMessage: detail,
+    };
+  }
+
+  if (agent === "polytoken") {
+    return {
+      ...polytokenProceedOutput(nativeEventName),
+      reason: `${detail} This non-stop action was allowed.`,
+    };
+  }
+  return {
+    systemMessage: `${detail} This non-stop action was allowed.`,
+  };
+}
+
+function matchingStartReceipt(
+  receipts: Receipt[],
+  completed: Receipt,
+): Receipt | undefined {
+  const command = completed.kind === "command";
+  const completedKind = command ? "command" : "tool";
+  const startKind = command ? "command-start" : "tool-start";
+  const sameInvocation = (receipt: Receipt): boolean => {
+    if (completed.toolCallId) {
+      return receipt.toolCallId === completed.toolCallId;
+    }
+    return command
+      ? receipt.commandFingerprint === completed.commandFingerprint
+      : receipt.toolName === completed.toolName;
+  };
+  const candidates: Receipt[] = [];
+  for (let index = receipts.length - 1; index >= 0; index -= 1) {
+    const prior = receipts[index];
+    if (!prior || !sameInvocation(prior)) {
+      continue;
+    }
+    if (prior.kind === completedKind) {
+      break;
+    }
+    if (prior.kind === startKind) {
+      candidates.push(prior);
+      if (completed.toolCallId) {
+        break;
+      }
+    }
+  }
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
 export async function runHook(
   agent: AgentName,
   options: { userLevel?: boolean } = {},
 ): Promise<void> {
   let nativeEventName =
     agent === "polytoken" ? process.env.POLYTOKEN_HOOK_EVENT : undefined;
+  let event: NormalizedHookEvent | undefined;
   try {
     if (!["claude", "cursor", "codex", "polytoken"].includes(agent)) {
       throw new Error(
@@ -61,7 +149,7 @@ export async function runHook(
     if (agent === "polytoken") {
       nativeEventName = polytokenEventName(parsedInput);
     }
-    const event =
+    event =
       agent === "cursor"
         ? normalizeCursorEvent(parsedInput)
         : agent === "codex"
@@ -83,7 +171,10 @@ export async function runHook(
     let eventsFile: string;
 
     if (projectRoot) {
-      if (options.userLevel && (await hasProjectHooks(projectRoot, agent))) {
+      if (
+        options.userLevel &&
+        (await hasProjectHooks(projectRoot, agent, event.stage))
+      ) {
         // The project's own hooks enforce here; a user-level hook running
         // too would double every check and receipt.
         proceed();
@@ -98,7 +189,7 @@ export async function runHook(
           "string";
       if (
         cursorCompatibilityEvent &&
-        (await hasProjectHooks(projectRoot, "cursor"))
+        (await hasProjectHooks(projectRoot, "cursor", event.stage))
       ) {
         process.stdout.write("{}\n");
         return;
@@ -121,9 +212,37 @@ export async function runHook(
       eventsFile = userEventsPath(diffRoot);
     }
 
-    const newReceipts = deriveReceipts(policy, event);
-    await appendReceipts(eventsFile, newReceipts);
     let receipts = await readSessionReceipts(eventsFile, event.sessionId);
+    const newReceipts = deriveReceipts(policy, event);
+    if (
+      newReceipts.some(
+        (receipt) =>
+          receipt.kind === "command" ||
+          receipt.kind === "command-start" ||
+          receipt.kind === "tool" ||
+          receipt.kind === "tool-start",
+      )
+    ) {
+      const stateFingerprint = await workingTreeFingerprint(diffRoot);
+      for (const receipt of newReceipts) {
+        if (
+          receipt.kind === "command" ||
+          receipt.kind === "command-start" ||
+          receipt.kind === "tool" ||
+          receipt.kind === "tool-start"
+        ) {
+          receipt.stateFingerprint = stateFingerprint;
+        }
+        if (receipt.kind === "command" || receipt.kind === "tool") {
+          const start = matchingStartReceipt(receipts, receipt);
+          if (start) {
+            receipt.stateBeforeFingerprint = start.stateFingerprint;
+          }
+        }
+      }
+    }
+    await appendReceipts(eventsFile, newReceipts);
+    receipts = [...receipts, ...newReceipts];
     const diffStats =
       event.stage === "stop" || event.stage === "agent-response"
         ? await inspectDiff(diffRoot, receipts)
@@ -179,16 +298,11 @@ export async function runHook(
     process.stdout.write(`${JSON.stringify(output)}\n`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    if (agent === "polytoken") {
-      process.stdout.write(
-        `${JSON.stringify(polytokenProceedOutput(nativeEventName))}\n`,
-      );
-      return;
-    }
+    process.stderr.write(`Codecut hook error: ${message}\n`);
     process.stdout.write(
-      `${JSON.stringify({
-        systemMessage: `Codecut could not check this action and allowed it: ${message}`,
-      })}\n`,
+      `${JSON.stringify(
+        hookErrorOutput(agent, event, nativeEventName, message),
+      )}\n`,
     );
   }
 }

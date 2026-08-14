@@ -40,7 +40,7 @@ function includesCodecutHook(value: unknown): boolean {
 function hookDefinition(event: CursorHookEvent, command: string): JsonObject {
   const definition: JsonObject = {
     command,
-    timeout: event === "stop" ? 10 : 5,
+    timeout: event === "stop" ? 30 : 15,
   };
   if (event === "stop") {
     definition.loop_limit = 4;

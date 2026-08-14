@@ -172,6 +172,79 @@ describe("starter policy compilation", () => {
     expect(compiled.rules[0]?.type).toBe("advisory");
   });
 
+  it("keeps negated and inline-scoped blocking phrases advisory", () => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text: "Not all unit tests must pass",
+          source: { path: "CLAUDE.md", line: 1, scope: "project" },
+        },
+        {
+          text: "Never treat warnings as errors in generated code",
+          source: { path: "CLAUDE.md", line: 2, scope: "project" },
+        },
+        {
+          text: "Only when editing release docs, all unit tests must pass",
+          source: { path: "CLAUDE.md", line: 3, scope: "project" },
+        },
+        {
+          text: "Do not require tests to run locally",
+          source: { path: "CLAUDE.md", line: 4, scope: "project" },
+        },
+        {
+          text: "Do not verify generated files",
+          source: { path: "CLAUDE.md", line: 5, scope: "project" },
+        },
+        {
+          text: "Only when migrating, keep changes small and focused",
+          source: { path: "CLAUDE.md", line: 6, scope: "project" },
+        },
+        {
+          text: "Comments may reference prompts in generated fixtures",
+          source: { path: "CLAUDE.md", line: 7, scope: "project" },
+        },
+        {
+          text: "For release builds, all unit tests must pass",
+          source: { path: "CLAUDE.md", line: 8, scope: "project" },
+        },
+        {
+          text: "While editing generated files, verify your work",
+          source: { path: "CLAUDE.md", line: 9, scope: "project" },
+        },
+        {
+          text: "You should not verify generated snapshots",
+          source: { path: "CLAUDE.md", line: 10, scope: "project" },
+        },
+        {
+          text: "Treat warnings as errors and all unit tests must pass",
+          source: { path: "CLAUDE.md", line: 11, scope: "project" },
+        },
+        {
+          text: "All unit tests must pass and run tests locally",
+          source: { path: "CLAUDE.md", line: 12, scope: "project" },
+        },
+      ],
+      sources: ["CLAUDE.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules.map((rule) => rule.type)).toEqual([
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+      "advisory",
+    ]);
+  });
+
   it("parses a comment line limit from directive text", () => {
     const compiled = compilePolicy({
       directives: [
@@ -222,6 +295,24 @@ describe("starter policy compilation", () => {
 });
 
 describe("starter policy enforcement", () => {
+  it("records command identity before execution without storing raw input", () => {
+    const receipts = deriveReceipts(
+      policy(),
+      hookEvent("pre-tool", {
+        toolName: "Bash",
+        toolInput: { command: "API_TOKEN=secret npm test" },
+      }),
+    );
+
+    expect(receipts).toEqual([
+      expect.objectContaining({
+        kind: "command-start",
+        commandFingerprint: expect.stringMatching(/^sha256:/),
+      }),
+    ]);
+    expect(JSON.stringify(receipts)).not.toContain("secret");
+  });
+
   it("blocks a remote test before execution", () => {
     const decision = evaluatePolicy({
       policy: policy(),
@@ -398,6 +489,53 @@ describe("starter policy enforcement", () => {
     );
   });
 
+  it.each([
+    ["numeric exit code", { exitCode: 1 }],
+    ["string exit status", { exit_status: "2" }],
+    ["nested failed result", { result: { success: false } }],
+    ["JSON-stringified failure", JSON.stringify({ exit_code: 3 })],
+    [
+      "deeply wrapped failure",
+      { data: { content: [{ text: "Process exited with code 4" }] } },
+    ],
+    [
+      "nested structural failure under outer success",
+      { exitCode: 0, result: { isError: true } },
+    ],
+  ])("records a post-tool command with %s as failed", (_label, toolOutput) => {
+    const activePolicy = policy();
+    const receipts = deriveReceipts(
+      activePolicy,
+      hookEvent("post-tool", {
+        toolName: "Bash",
+        toolInput: { command: "npm test" },
+        toolOutput,
+      }),
+    );
+
+    expect(receipts[0]).toMatchObject({
+      kind: "command",
+      isTest: true,
+      success: false,
+    });
+  });
+
+  it("trusts an explicit zero exit code over incidental output text", () => {
+    const receipts = deriveReceipts(
+      policy(),
+      hookEvent("post-tool", {
+        toolName: "Bash",
+        toolInput: { command: "npm test" },
+        toolOutput: {
+          exitCode: 0,
+          stdout: 'fixture text: {"code": 200}, process exited with code 1',
+        },
+      }),
+    );
+
+    expect(receipts[0]?.success).toBe(true);
+  });
+
   it("does not count an explicit zero-warning summary", () => {
     const activePolicy = policy();
     const event = hookEvent("post-tool", {
@@ -552,6 +690,83 @@ describe("starter policy enforcement", () => {
     );
   });
 
+  it("requires verification from the current working-tree state", () => {
+    const stale = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        verification({
+          stateFingerprint: "sha256:1111111111111111",
+        }),
+      ],
+      diffStats: {
+        files: 0,
+        added: 0,
+        deleted: 0,
+        complete: false,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+    const current = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        verification({
+          stateBeforeFingerprint: "sha256:2222222222222222",
+          stateFingerprint: "sha256:2222222222222222",
+        }),
+      ],
+      diffStats: {
+        files: 1,
+        added: 2,
+        deleted: 0,
+        complete: true,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+    const mutatedDuringVerification = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        verification({
+          stateBeforeFingerprint: "sha256:1111111111111111",
+          stateFingerprint: "sha256:2222222222222222",
+        }),
+      ],
+      diffStats: {
+        files: 0,
+        added: 0,
+        deleted: 0,
+        complete: false,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+    const unmatchedCompletion = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        verification({
+          stateFingerprint: "sha256:2222222222222222",
+        }),
+      ],
+      diffStats: {
+        files: 1,
+        added: 1,
+        deleted: 0,
+        complete: true,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+
+    expect(stale.outcome).toBe("block");
+    expect(stale.violations.map((item) => item.directive)).toContain(
+      "All unit tests must pass",
+    );
+    expect(current.outcome).toBe("allow");
+    expect(mutatedDuringVerification.outcome).toBe("block");
+    expect(unmatchedCompletion.outcome).toBe("block");
+  });
+
   it("requires tests when the working diff changed outside an edit tool", () => {
     const decision = evaluatePolicy({
       policy: policy(),
@@ -617,7 +832,7 @@ describe("starter policy enforcement", () => {
     expect(decision.outcome).toBe("allow");
   });
 
-  it("does not store raw commands or classify arbitrary MCP writes as edits", () => {
+  it("stores only opaque command and MCP tool identities", () => {
     const activePolicy = policy();
     const commandEvent = hookEvent("post-tool", {
       toolName: "Bash",
@@ -633,15 +848,67 @@ describe("starter policy enforcement", () => {
     expect(JSON.stringify(commandReceipts)).not.toContain("secret");
     expect(JSON.stringify(commandReceipts)).not.toContain("hidden");
 
+    const mcpStart = deriveReceipts(
+      activePolicy,
+      hookEvent("pre-tool", {
+        toolName: "mcp__filesystem__write_file",
+        toolCallId: "mcp-call-1",
+        toolInput: { path: "secret.txt", content: "private" },
+      }),
+    );
     const mcpWrite = deriveReceipts(
       activePolicy,
       hookEvent("post-tool", {
-        toolName: "mcp__slack__write_message",
-        toolInput: { channel: "dev", text: "hello" },
+        toolName: "mcp__filesystem__write_file",
+        toolCallId: "mcp-call-1",
+        toolInput: { path: "secret.txt", content: "private" },
         toolOutput: "ok",
       }),
     );
-    expect(mcpWrite).toEqual([]);
+    expect(mcpStart[0]).toMatchObject({
+      kind: "tool-start",
+      toolCallId: "mcp-call-1",
+    });
+    expect(mcpWrite[0]).toMatchObject({
+      kind: "tool",
+      toolCallId: "mcp-call-1",
+      success: true,
+    });
+    expect(JSON.stringify([...mcpStart, ...mcpWrite])).not.toContain(
+      "private",
+    );
+  });
+
+  it("treats a commandless MCP state change as unverified work", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        {
+          version: 1,
+          id: "mcp-write",
+          timestamp: "2026-01-01T00:00:02.000Z",
+          sessionId: "session-1",
+          kind: "tool",
+          toolName: "mcp__filesystem__write_file",
+          success: true,
+          stateBeforeFingerprint: "sha256:1111111111111111",
+          stateFingerprint: "sha256:2222222222222222",
+        },
+      ],
+      diffStats: {
+        files: 0,
+        added: 0,
+        deleted: 0,
+        complete: false,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations.map((item) => item.directive)).toContain(
+      "All unit tests must pass",
+    );
   });
 
   it("flags comments that leak transient agent context", () => {

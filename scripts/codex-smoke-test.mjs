@@ -112,6 +112,13 @@ try {
   );
 
   hook(runtime, fixture, {
+    hook_event_name: "PreToolUse",
+    session_id: "codex-completion",
+    cwd: fixture,
+    tool_name: "Bash",
+    tool_input: { command: "npm test" },
+  });
+  hook(runtime, fixture, {
     hook_event_name: "PostToolUse",
     session_id: "codex-completion",
     cwd: fixture,
