@@ -44,6 +44,23 @@ function latest(receipts: Receipt[]): Receipt | undefined {
   )[0];
 }
 
+function matchesTestRule(
+  receipt: Receipt,
+  rule: Extract<
+    PolicyRule,
+    { type: "require-passing-tests" | "local-testing" }
+  >,
+): boolean {
+  if (receipt.testRuleIds !== undefined) {
+    return receipt.testRuleIds.includes(rule.id);
+  }
+  const patterns =
+    rule.type === "require-passing-tests"
+      ? rule.commandPatterns
+      : rule.testCommandPatterns;
+  return Boolean(receipt.isTest) || matchesAny(receipt.command ?? "", patterns);
+}
+
 function countLabel(
   count: number,
   singular: string,
@@ -197,9 +214,7 @@ function evaluateStop(
     if (rule.type === "require-passing-tests" && hasChanges) {
       const latestTest = latest(
         commandsAfterEdit.filter(
-          (receipt) =>
-            receipt.isTest ||
-            matchesAny(receipt.command ?? "", rule.commandPatterns),
+          (receipt) => matchesTestRule(receipt, rule),
         ),
       );
       if (!latestTest?.success) {
@@ -242,9 +257,7 @@ function evaluateStop(
     if (rule.type === "local-testing" && hasChanges) {
       const latestTest = latest(
         commandsAfterEdit.filter(
-          (receipt) =>
-            receipt.isTest ||
-            matchesAny(receipt.command ?? "", rule.testCommandPatterns),
+          (receipt) => matchesTestRule(receipt, rule),
         ),
       );
       if (!latestTest || latestTest.location !== "local") {

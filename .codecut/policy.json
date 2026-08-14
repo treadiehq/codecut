@@ -163,9 +163,9 @@
       ],
       "bannedPatterns": [
         "\\b(?:AGENTS|CLAUDE|GEMINI)\\.md\\b",
-        "\\b(?:system\\s+)?prompt\\b",
-        "\\b(?:agent\\s+)?instructions?\\b",
-        "\\bdirectives?\\b",
+        "\\b(?:system|agent)\\s+prompt\\b",
+        "\\bagent\\s+instructions?\\b",
+        "\\bcodecut\\s+directives?\\b",
         "\\b[A-Z][A-Z0-9]{1,9}-\\d+\\b",
         "(?:\\.cursor/(?:plans|rules)|/tmp/|temporary\\s+spec|ephemeral\\s+spec)",
         "\\b(?:as\\s+requested|per\\s+(?:the\\s+)?(?:prompt|instructions?)|the\\s+agent|I\\s+(?:added|changed|implemented))\\b"

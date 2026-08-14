@@ -210,6 +210,12 @@ export function scanComments(lines: CommentLine[]): CommentLine[] {
       continue;
     }
 
+    const standalone = trimmed.match(/^(?:(?:\/\/+|#|--|;)\s?)(.+)$/);
+    if (standalone?.[1]) {
+      comments.push({ line, text: standalone[1].trim() });
+      continue;
+    }
+
     const blockStart = trimmed.indexOf("/*");
     if (blockStart >= 0 && !/["'`]/.test(trimmed.slice(0, blockStart))) {
       const afterStart = trimmed.slice(blockStart + 2);
@@ -220,11 +226,6 @@ export function scanComments(lines: CommentLine[]): CommentLine[] {
       }
       inBlockComment = !closes;
       continue;
-    }
-
-    const standalone = trimmed.match(/^(?:(?:\/\/+|#|--|;)\s?)(.+)$/);
-    if (standalone?.[1]) {
-      comments.push({ line, text: standalone[1].trim() });
     }
   }
 

@@ -7,6 +7,10 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import {
+  DEFAULT_COMMENT_CONTEXT_PATTERNS,
+  LEGACY_COMMENT_CONTEXT_PATTERNS,
+} from "./patterns.js";
 import { policySchema, type Policy } from "./schema.js";
 
 export const PROJECT_DIRECTORY = ".codecut";
@@ -47,6 +51,13 @@ export async function migrateLegacyProjectDirectory(
   return true;
 }
 
+function patternsEqual(left: string[], right: string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((pattern, index) => pattern === right[index])
+  );
+}
+
 export async function findProjectRoot(startDirectory: string): Promise<string | undefined> {
   let current = path.resolve(startDirectory);
 
@@ -67,11 +78,24 @@ export function parsePolicyDocument(raw: string): Policy {
   const policy = policySchema.parse(JSON.parse(raw));
   return {
     ...policy,
-    rules: policy.rules.map((rule) =>
-      rule.type === "meta-compliance"
-        ? { ...rule, type: "advisory" as const }
-        : rule,
-    ),
+    rules: policy.rules.map((rule) => {
+      if (rule.type === "meta-compliance") {
+        return { ...rule, type: "advisory" as const };
+      }
+      if (
+        rule.type === "comment-quality" &&
+        patternsEqual(
+          rule.bannedPatterns,
+          LEGACY_COMMENT_CONTEXT_PATTERNS,
+        )
+      ) {
+        return {
+          ...rule,
+          bannedPatterns: [...DEFAULT_COMMENT_CONTEXT_PATTERNS],
+        };
+      }
+      return rule;
+    }),
   };
 }
 

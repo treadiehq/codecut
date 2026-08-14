@@ -46,11 +46,21 @@ export const DEFAULT_CODE_FILE_PATTERNS = [
   String.raw`\.(?:[cm]?[jt]sx?|py|rb|rs|go|java|kt|kts|swift|php|cs|cpp|cc|cxx|h|hpp|sql|sh|bash|zsh)$`,
 ];
 
-export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
+export const LEGACY_COMMENT_CONTEXT_PATTERNS = [
   String.raw`\b(?:AGENTS|CLAUDE|GEMINI)\.md\b`,
   String.raw`\b(?:system\s+)?prompt\b`,
   String.raw`\b(?:agent\s+)?instructions?\b`,
   String.raw`\bdirectives?\b`,
+  String.raw`\b[A-Z][A-Z0-9]{1,9}-\d+\b`,
+  String.raw`(?:\.cursor/(?:plans|rules)|/tmp/|temporary\s+spec|ephemeral\s+spec)`,
+  String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent|I\s+(?:added|changed|implemented))\b`,
+];
+
+export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
+  String.raw`\b(?:AGENTS|CLAUDE|GEMINI)\.md\b`,
+  String.raw`\b(?:system|agent)\s+prompt\b`,
+  String.raw`\bagent\s+instructions?\b`,
+  String.raw`\bcodecut\s+directives?\b`,
   String.raw`\b[A-Z][A-Z0-9]{1,9}-\d+\b`,
   String.raw`(?:\.cursor/(?:plans|rules)|/tmp/|temporary\s+spec|ephemeral\s+spec)`,
   String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent|I\s+(?:added|changed|implemented))\b`,

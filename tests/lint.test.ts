@@ -134,6 +134,24 @@ describe("comment scanning", () => {
     ]);
   });
 
+  it("preserves block markers inside standalone line comments", () => {
+    const comments = scanComments([
+      { line: 1, text: "// TODO: Check the /* important */ code path" },
+      { line: 2, text: "# TODO: See /* legacy */ implementation" },
+      { line: 3, text: "-- FIXME: Fix the /* block */ issue" },
+      { line: 4, text: "; TODO: Review the /* assembly */ branch" },
+      { line: 5, text: "/* real block */" },
+    ]);
+
+    expect(comments).toEqual([
+      { line: 1, text: "TODO: Check the /* important */ code path" },
+      { line: 2, text: "TODO: See /* legacy */ implementation" },
+      { line: 3, text: "FIXME: Fix the /* block */ issue" },
+      { line: 4, text: "TODO: Review the /* assembly */ branch" },
+      { line: 5, text: "real block" },
+    ]);
+  });
+
   it("resets block-comment state across line gaps", () => {
     const comments = scanComments([
       { line: 1, text: "/* opened but closing line was not added" },
@@ -164,6 +182,65 @@ describe("lint checks", () => {
     ]);
   });
 
+  it("allows prompt, instruction, and directive programming terminology", () => {
+    const commonTerms = [
+      "Prompt the user for their name",
+      "Display the command prompt",
+      "Show a confirmation prompt",
+      "Instructions for the compiler optimization pass",
+      "The CPU instructions are decoded here",
+      "Angular directives are components without views",
+      "Attribute directives change appearance",
+    ];
+    const commonTermFiles = parseUnifiedDiff(
+      [
+        "diff --git a/src/terms.ts b/src/terms.ts",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/src/terms.ts",
+        `@@ -0,0 +1,${commonTerms.length} @@`,
+        ...commonTerms.map((comment) => `+// ${comment}`),
+        "",
+      ].join("\n"),
+    );
+
+    const result = runLint(commonTermFiles, defaultLintConfig());
+
+    expect(
+      result.findings.filter(
+        (finding) => finding.check === "comment-quality",
+      ),
+    ).toEqual([]);
+  });
+
+  it("flags explicitly qualified agent-context comments", () => {
+    const agentTerms = [
+      "Do not copy the system prompt here",
+      "Preserve the agent prompt for debugging",
+      "These agent instructions are temporary",
+      "The Codecut directives require this workaround",
+    ];
+    const agentTermFiles = parseUnifiedDiff(
+      [
+        "diff --git a/src/agent-terms.ts b/src/agent-terms.ts",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/src/agent-terms.ts",
+        `@@ -0,0 +1,${agentTerms.length} @@`,
+        ...agentTerms.map((comment) => `+// ${comment}`),
+        "",
+      ].join("\n"),
+    );
+
+    const result = runLint(agentTermFiles, defaultLintConfig());
+
+    expect(
+      result.findings
+        .filter((finding) => finding.check === "comment-quality")
+        .map((finding) => finding.evidence),
+    ).toEqual(agentTerms);
+  });
+
   it("flags task markers case-sensitively", () => {
     const result = runLint(files, defaultLintConfig());
     const todoFindings = result.findings.filter(
@@ -190,6 +267,33 @@ describe("lint checks", () => {
     expect(
       lowercase.findings.filter((finding) => finding.check === "todo-comments"),
     ).toEqual([]);
+  });
+
+  it("flags task markers before block syntax inside line comments", () => {
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.ts b/src/x.ts",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/src/x.ts",
+          "@@ -0,0 +1 @@",
+          "+// TODO: Check the /* important */ code path",
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+
+    expect(
+      result.findings.filter((finding) => finding.check === "todo-comments"),
+    ).toEqual([
+      expect.objectContaining({
+        path: "src/x.ts",
+        line: 1,
+        evidence: "TODO: Check the /* important */ code path",
+      }),
+    ]);
   });
 
   it("flags debug statements except in test files", () => {

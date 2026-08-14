@@ -267,12 +267,6 @@ export function deriveReceipts(
     return receipts;
   }
 
-  const testPatterns = policy.rules
-    .filter((rule) => rule.type === "require-passing-tests")
-    .flatMap((rule) => rule.commandPatterns);
-  const testOutputPatterns = policy.rules
-    .filter((rule) => rule.type === "require-passing-tests")
-    .flatMap((rule) => rule.testOutputPatterns);
   const verificationPatterns = policy.rules
     .filter(
       (rule) =>
@@ -296,11 +290,24 @@ export function deriveReceipts(
     matchesAny(rawCommand, remoteCommandPatterns) ||
     matchesAny(event.toolName ?? "", remoteToolPatterns);
   const isVerification = matchesAny(rawCommand, verificationPatterns);
-  const isTest =
-    matchesAny(rawCommand, testPatterns) ||
-    (event.stage === "post-tool" &&
-      isVerification &&
-      matchesAny(output, testOutputPatterns));
+  const testRuleIds = policy.rules.flatMap((rule) => {
+    if (!rule.enabled || rule.mode === "off") {
+      return [];
+    }
+    if (rule.type === "require-passing-tests") {
+      const matchesCommand = matchesAny(rawCommand, rule.commandPatterns);
+      const matchesTestOutput =
+        event.stage === "post-tool" &&
+        isVerification &&
+        matchesAny(output, rule.testOutputPatterns);
+      return matchesCommand || matchesTestOutput ? [rule.id] : [];
+    }
+    if (rule.type === "local-testing") {
+      return matchesAny(rawCommand, rule.testCommandPatterns) ? [rule.id] : [];
+    }
+    return [];
+  });
+  const isTest = testRuleIds.length > 0;
 
   receipts.push({
     version: 1,
@@ -312,6 +319,7 @@ export function deriveReceipts(
     toolName: event.toolName,
     success: event.stage === "post-tool",
     isTest,
+    testRuleIds,
     isVerification,
     location: remote ? "remote" : command ? "local" : "unknown",
     warningCount: countWarningLines(output, warningPatterns),

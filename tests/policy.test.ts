@@ -256,6 +256,100 @@ describe("starter policy enforcement", () => {
     );
   });
 
+  it("identifies local tests with a local-testing rule only", () => {
+    const localOnlyPolicy = compilePolicy({
+      directives: [
+        {
+          text: "Run tests locally",
+          source: { path: "CLAUDE.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["CLAUDE.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+    const localRule = localOnlyPolicy.rules.find(
+      (rule) => rule.type === "local-testing",
+    );
+    if (!localRule || localRule.type !== "local-testing") {
+      throw new Error("local-testing rule missing");
+    }
+    const commandEvent = hookEvent("post-tool", {
+      toolName: "Bash",
+      toolInput: { command: "npm test" },
+      toolOutput: "5 tests passed",
+    });
+    const receipts = deriveReceipts(localOnlyPolicy, commandEvent);
+
+    expect(receipts[0]).toMatchObject({
+      isTest: true,
+      testRuleIds: [localRule.id],
+      location: "local",
+    });
+    expect(
+      evaluatePolicy({
+        policy: localOnlyPolicy,
+        event: hookEvent("stop"),
+        receipts: [edit(), ...receipts],
+        diffStats: { files: 1, added: 1, deleted: 0, complete: true },
+      }).outcome,
+    ).toBe("allow");
+  });
+
+  it("keeps custom test patterns scoped to their matching rules", () => {
+    const customPolicy = compilePolicy({
+      directives: [
+        {
+          text: "All unit tests must pass",
+          source: { path: "CLAUDE.md", line: 1, scope: "project" },
+        },
+        {
+          text: "Run tests locally",
+          source: { path: "CLAUDE.md", line: 2, scope: "project" },
+        },
+      ],
+      sources: ["CLAUDE.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+    const passingRule = customPolicy.rules.find(
+      (rule) => rule.type === "require-passing-tests",
+    );
+    const localRule = customPolicy.rules.find(
+      (rule) => rule.type === "local-testing",
+    );
+    if (
+      !passingRule ||
+      passingRule.type !== "require-passing-tests" ||
+      !localRule ||
+      localRule.type !== "local-testing"
+    ) {
+      throw new Error("test rules missing");
+    }
+    passingRule.commandPatterns = [String.raw`\bvitest\b`];
+    localRule.testCommandPatterns = [String.raw`\bnpm\s+test\b`];
+
+    const receipts = deriveReceipts(
+      customPolicy,
+      hookEvent("post-tool", {
+        toolName: "Bash",
+        toolInput: { command: "npm test" },
+        toolOutput: "5 tests passed",
+      }),
+    );
+    const decision = evaluatePolicy({
+      policy: customPolicy,
+      event: hookEvent("stop"),
+      receipts: [edit(), ...receipts],
+      diffStats: { files: 1, added: 1, deleted: 0, complete: true },
+    });
+
+    expect(receipts[0]?.testRuleIds).toEqual([localRule.id]);
+    expect(decision.violations).toEqual([
+      expect.objectContaining({ ruleId: passingRule.id }),
+    ]);
+  });
+
   it("blocks completion when tests fail after an edit", () => {
     const decision = evaluatePolicy({
       policy: policy(),

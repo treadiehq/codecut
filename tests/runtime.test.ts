@@ -18,8 +18,13 @@ import {
   LEGACY_PROJECT_DIRECTORY,
   loadPolicy,
   migrateLegacyProjectDirectory,
+  parsePolicyDocument,
   PROJECT_DIRECTORY,
 } from "../src/core/project.js";
+import {
+  DEFAULT_COMMENT_CONTEXT_PATTERNS,
+  LEGACY_COMMENT_CONTEXT_PATTERNS,
+} from "../src/core/patterns.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -112,5 +117,56 @@ describe("persistent runtime installation", () => {
 
     const policy = await loadPolicy(projectRoot);
     expect(policy.rules[0]?.type).toBe("advisory");
+  });
+
+  it("migrates only the legacy default comment patterns", () => {
+    const policy = parsePolicyDocument(
+      JSON.stringify({
+        version: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        agents: ["claude"],
+        sources: ["starter policy"],
+        rules: [
+          {
+            id: "comment-quality-legacy",
+            directive: "Keep agent context out of comments",
+            source: {
+              path: "starter policy",
+              scope: "generated",
+              conditional: false,
+            },
+            mode: "warn",
+            confirmed: true,
+            enabled: true,
+            type: "comment-quality",
+            filePatterns: ["\\.ts$"],
+            bannedPatterns: LEGACY_COMMENT_CONTEXT_PATTERNS,
+          },
+          {
+            id: "comment-quality-custom",
+            directive: "Keep custom context out of comments",
+            source: {
+              path: "CLAUDE.md",
+              scope: "project",
+              conditional: false,
+            },
+            mode: "warn",
+            confirmed: true,
+            enabled: true,
+            type: "comment-quality",
+            filePatterns: ["\\.ts$"],
+            bannedPatterns: ["custom context"],
+          },
+        ],
+      }),
+    );
+
+    expect(policy.rules[0]).toMatchObject({
+      bannedPatterns: DEFAULT_COMMENT_CONTEXT_PATTERNS,
+    });
+    expect(policy.rules[1]).toMatchObject({
+      bannedPatterns: ["custom context"],
+    });
   });
 });

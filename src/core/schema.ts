@@ -157,6 +157,7 @@ export const receiptSchema = z.object({
   toolName: z.string().optional(),
   success: z.boolean().optional(),
   isTest: z.boolean().optional(),
+  testRuleIds: z.array(z.string()).optional(),
   isVerification: z.boolean().optional(),
   location: z.enum(["local", "remote", "unknown"]).optional(),
   warningCount: z.number().int().nonnegative().optional(),
