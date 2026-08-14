@@ -58,7 +58,7 @@ describe("user config directory", () => {
 });
 
 describe("user rules setup", () => {
-  it("creates a template on first run and compiles an empty policy", async () => {
+  it("creates a template with a safe default comment rule", async () => {
     const configDirectory = await temporaryDirectory(".codecut-user-");
 
     const result = await setupUserRules({
@@ -69,10 +69,16 @@ describe("user rules setup", () => {
 
     expect(result.rulesFileCreated).toBe(true);
     expect(result.policyCreated).toBe(true);
-    expect(result.ruleCount).toBe(0);
+    expect(result.ruleCount).toBe(1);
 
     const policy = await loadUserPolicy(configDirectory);
-    expect(policy?.rules).toEqual([]);
+    expect(policy?.rules).toEqual([
+      expect.objectContaining({
+        type: "comment-quality",
+        mode: "warn",
+        source: expect.objectContaining({ scope: "user" }),
+      }),
+    ]);
     expect(policy?.sources).toEqual([
       expect.stringContaining("AGENTS.md"),
     ]);
@@ -138,7 +144,7 @@ describe("user rules setup", () => {
       configDirectory,
     });
     expect(preserved.policyCreated).toBe(false);
-    expect(preserved.ruleCount).toBe(0);
+    expect(preserved.ruleCount).toBe(1);
 
     const refreshed = await setupUserRules({
       accept: false,
@@ -147,14 +153,20 @@ describe("user rules setup", () => {
     });
     expect(refreshed.policyCreated).toBe(true);
     expect(refreshed.ruleCount).toBe(1);
+    expect(
+      (await loadUserPolicy(configDirectory))?.rules[0]?.type,
+    ).toBe("require-passing-tests");
   });
 
-  it("ignores directives inside code fences in the rules file", async () => {
+  it("ignores example directives inside code fences", async () => {
     const configDirectory = await temporaryDirectory(".codecut-user-");
     await setupUserRules({ accept: false, refresh: false, configDirectory });
 
     const discovery = await discoverUserDirectives(configDirectory);
-    expect(discovery.directives).toEqual([]);
+    expect(discovery.directives).toHaveLength(1);
+    expect(discovery.directives[0]?.text).toContain(
+      "Keep prompts, agent instructions",
+    );
   });
 });
 
@@ -209,6 +221,42 @@ describe("policy merging", () => {
       "AGENTS.md",
       "~/.config/codecut/AGENTS.md",
     ]);
+  });
+
+  it("does not duplicate the default comment rule in starter projects", () => {
+    const projectPolicy = compilePolicy({
+      directives: [],
+      sources: [],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+    const userPolicy = compilePolicy({
+      directives: [
+        {
+          text: "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
+          source: {
+            path: "~/.config/codecut/AGENTS.md",
+            line: 5,
+            scope: "user",
+            conditional: false,
+          },
+        },
+      ],
+      sources: ["~/.config/codecut/AGENTS.md"],
+      agent: "unknown",
+      acceptBlockingRules: false,
+      fallbackToStarterPolicy: false,
+    });
+
+    const merged = mergePolicies(projectPolicy, userPolicy);
+
+    expect(
+      merged.rules.filter((rule) => rule.type === "comment-quality"),
+    ).toHaveLength(1);
+    expect(
+      merged.rules.find((rule) => rule.type === "comment-quality")?.source
+        .scope,
+    ).toBe("generated");
   });
 
   it("returns the project policy untouched without a user policy", () => {

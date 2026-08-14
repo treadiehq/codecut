@@ -125,7 +125,7 @@ export async function getStatus(
   const projectRoot = await findProjectRoot(cwd);
   if (!projectRoot) {
     throw new Error(
-      "No Codecut policy found here or in a parent directory. Run `codecut setup`.",
+      "No project policy found here or in a parent directory. Run `codecut setup --agent claude`.",
     );
   }
   const configDirectory = userConfigDirectory();

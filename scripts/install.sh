@@ -137,5 +137,5 @@ case ":$PATH:" in
 esac
 
 printf '\n'
-ok "Codecut is installed. Set it up in a project with:"
-printf '    %scodecut setup --agent claude%s\n' "$bold" "$reset"
+ok "Codecut is installed. Start user-level Claude checks with:"
+printf '    %scodecut setup%s\n' "$bold" "$reset"

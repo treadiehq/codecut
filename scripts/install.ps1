@@ -138,5 +138,5 @@ if (-not $onPath) {
 }
 
 Write-Host ''
-Ok 'Codecut is installed. Set it up in a project with:'
-Write-Host '    codecut setup --agent claude' -ForegroundColor White
+Ok 'Codecut is installed. Start user-level Claude checks with:'
+Write-Host '    codecut setup' -ForegroundColor White

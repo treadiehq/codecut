@@ -9,7 +9,7 @@ const ROOT_INSTRUCTION_FILES = [
 ];
 
 const DIRECTIVE_LANGUAGE =
-  /\b(?:always|never|must|should|do not|don't|cannot|can't|use|avoid|prefer|favor|verify|treat|require)\b/i;
+  /\b(?:always|never|must|should|do not|don't|cannot|can't|use|avoid|prefer|favor|keep|verify|treat|require)\b/i;
 const SKIPPED_DIRECTORIES = new Set([
   ".git",
   ".codecut",

@@ -108,11 +108,16 @@ async function setup(
     user: boolean;
   },
   agentExplicitlyGiven: boolean,
+  cwdExplicitlyGiven: boolean,
 ): Promise<void> {
-  if (options.user) {
+  const defaultUserSetup =
+    !options.user && !agentExplicitlyGiven && !cwdExplicitlyGiven;
+  if (options.user || defaultUserSetup) {
     await setupUser(
       options,
-      agentExplicitlyGiven ? agent(options.agent) : undefined,
+      agentExplicitlyGiven || defaultUserSetup
+        ? agent(options.agent)
+        : undefined,
     );
     return;
   }
@@ -166,7 +171,7 @@ program
     "after",
     `
 Examples:
-  codecut setup --agent claude
+  codecut setup
   codecut update
   codecut status --json
   codecut test --json
@@ -176,7 +181,7 @@ Examples:
 
 program
   .command("setup")
-  .description("Install or update Codecut, then check that it works")
+  .description("Install user-level checks or configure Codecut in a project")
   .option(
     "--agent <agent>",
     "agent to configure: claude, cursor, codex, or polytoken",
@@ -197,18 +202,26 @@ program
   .addHelpText(
     "after",
     `
+Default:
+  codecut setup is equivalent to codecut setup --user --agent claude
+
 Examples:
+  codecut setup
+  codecut setup --user --agent cursor
   codecut setup --agent claude
   codecut setup --agent cursor
   codecut setup --agent codex
   codecut setup --agent polytoken
   codecut setup --agent claude --accept
   codecut setup --user
-  codecut setup --user --agent cursor
 `,
   )
   .action(async (options, command) => {
-    await setup(options, command.getOptionValueSource("agent") !== "default");
+    await setup(
+      options,
+      command.getOptionValueSource("agent") !== "default",
+      command.getOptionValueSource("cwd") !== "default",
+    );
   });
 
 program

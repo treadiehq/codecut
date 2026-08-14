@@ -33,23 +33,35 @@ irm https://raw.githubusercontent.com/treadiehq/codecut/main/scripts/install.ps1
 
 ## Get started
 
-Run one of these commands inside your project:
+For Claude Code, run:
 
 ```sh
-# Cursor
-codecut setup --agent cursor
+codecut setup
+```
 
-# Claude Code
+This is equivalent to `codecut setup --user --agent claude`. It installs a
+user-level hook that works in every repository and starts with a safe warning
+for temporary agent context left in code comments.
+
+For a different agent, select it explicitly:
+
+```sh
+codecut setup --user --agent cursor
+codecut setup --user --agent codex
+codecut setup --user --agent polytoken
+```
+
+To keep Codecut setup inside the current project, pass `--agent` without
+`--user`:
+
+```sh
 codecut setup --agent claude
-
-# Codex
+codecut setup --agent cursor
 codecut setup --agent codex
-
-# Polytoken
 codecut setup --agent polytoken
 ```
 
-That is it. Codecut adds the agent hook, checks that it works, and creates
+Project setup adds the agent hook, checks that it works, and creates
 `.codecut/policy.json`.
 
 Codex loads project hooks after you trust the project in Codex.

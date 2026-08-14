@@ -16,13 +16,17 @@ Rules in this file apply to every project on this machine. Codecut merges
 them with each project's policy when hooks run; project rules win when the
 two overlap.
 
-Write one rule per line, then compile them:
+## Defaults
+
+- Keep prompts, agent instructions, tickets, and temporary files out of code comments
+
+Add or change rules one per line, then compile them:
 
 \`\`\`sh
 codecut setup --user --refresh-policy
 \`\`\`
 
-Example rules, shown inside a code fence so they stay inactive:
+More example rules, shown inside a code fence so they stay inactive:
 
 \`\`\`md
 - Never leave prompts, agent instructions, or tickets in code comments
