@@ -1,4 +1,5 @@
 import { access, readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import {
   findProjectRoot,
@@ -25,13 +26,16 @@ export type RuleStatus = {
 };
 
 export type StatusResult = {
-  projectRoot: string;
+  /** Whether a project policy or only user-level rules are in effect here. */
+  scope: "project" | "user";
+  projectRoot?: string;
   policyPath: string;
   userPolicyPath?: string;
   userRuleCount: number;
   hookAgent: AgentName;
-  runtimeInstalled: boolean;
-  runtimePath: string;
+  /** Absent in user scope: the runtime is a per-project install. */
+  runtimeInstalled?: boolean;
+  runtimePath?: string;
   agents: string[];
   sources: string[];
   hooksInstalled: boolean;
@@ -43,6 +47,7 @@ export type StatusResult = {
 export async function inspectHookSettings(
   baseDirectory: string,
   hookAgent: AgentName,
+  options: { userLevel?: boolean } = {},
 ): Promise<{
   settingsPath: string;
   installedHookEvents: string[];
@@ -54,7 +59,14 @@ export async function inspectHookSettings(
       : hookAgent === "codex"
         ? path.join(baseDirectory, ".codex", "hooks.json")
         : hookAgent === "polytoken"
-          ? path.join(baseDirectory, ".polytoken", "hooks.json")
+          ? options.userLevel
+            ? path.join(
+                process.env.XDG_CONFIG_HOME?.trim() ||
+                  path.join(baseDirectory, ".config"),
+                "polytoken",
+                "hooks.json",
+              )
+            : path.join(baseDirectory, ".polytoken", "hooks.json")
         : path.join(baseDirectory, ".claude", "settings.json");
   const requiredHookEvents =
     hookAgent === "cursor"
@@ -118,18 +130,58 @@ export async function inspectHookSettings(
   return { settingsPath, installedHookEvents, missingHookEvents };
 }
 
+function ruleStatuses(policy: {
+  rules: {
+    id: string;
+    type: PolicyRule["type"];
+    directive: string;
+    source: { path: string; line?: number; scope: RuleStatus["scope"] };
+    mode: "block" | "warn" | "off";
+    confirmed: boolean;
+  }[];
+}): RuleStatus[] {
+  return policy.rules.map((rule) => ({
+    id: rule.id,
+    type: rule.type,
+    directive: rule.directive,
+    source: `${rule.source.path}${rule.source.line ? `:${rule.source.line}` : ""}`,
+    scope: rule.source.scope,
+    mode: rule.mode === "block" && !rule.confirmed ? "warn" : rule.mode,
+  }));
+}
+
 export async function getStatus(
   cwd: string,
   hookAgent: AgentName = "claude",
 ): Promise<StatusResult> {
   const projectRoot = await findProjectRoot(cwd);
-  if (!projectRoot) {
-    throw new Error(
-      "No project policy found here or in a parent directory. Run `codecut setup --agent claude`.",
-    );
-  }
   const configDirectory = userConfigDirectory();
   const userPolicy = await loadUserPolicy(configDirectory);
+  if (!projectRoot) {
+    if (!userPolicy || userPolicy.rules.length === 0) {
+      throw new Error(
+        "No project policy found here or in a parent directory and no user-level rules are configured. Run `codecut setup --agent claude` for this project or `codecut setup --user` for user-level rules.",
+      );
+    }
+    // No project policy, but user-level rules enforce here through
+    // user-level hooks — report them instead of a misleading hard error.
+    const { installedHookEvents, missingHookEvents } =
+      await inspectHookSettings(os.homedir(), hookAgent, { userLevel: true });
+    const userPolicyDisplayPath = displayPath(userPolicyPath(configDirectory));
+    return {
+      scope: "user",
+      policyPath: userPolicyDisplayPath,
+      userPolicyPath: userPolicyDisplayPath,
+      userRuleCount: userPolicy.rules.length,
+      hookAgent,
+      agents: userPolicy.agents,
+      sources: userPolicy.sources,
+      hooksInstalled: missingHookEvents.length === 0,
+      installedHookEvents,
+      missingHookEvents,
+      rules: ruleStatuses(userPolicy),
+    };
+  }
   const policy = mergePolicies(await loadPolicy(projectRoot), userPolicy);
   const runtimePath = path.join(projectRoot, RUNTIME_RELATIVE_PATH);
   let runtimeInstalled = false;
@@ -145,6 +197,7 @@ export async function getStatus(
   );
 
   return {
+    scope: "project",
     projectRoot,
     policyPath: policyPath(projectRoot),
     userPolicyPath: userPolicy
@@ -159,26 +212,22 @@ export async function getStatus(
     hooksInstalled: missingHookEvents.length === 0,
     installedHookEvents,
     missingHookEvents,
-    rules: policy.rules.map((rule) => ({
-      id: rule.id,
-      type: rule.type,
-      directive: rule.directive,
-      source: `${rule.source.path}${rule.source.line ? `:${rule.source.line}` : ""}`,
-      scope: rule.source.scope,
-      mode:
-        rule.mode === "block" && !rule.confirmed ? "warn" : rule.mode,
-    })),
+    rules: ruleStatuses(policy),
   };
 }
 
 export function formatStatus(status: StatusResult): string {
   const lines = [
-    `project: ${status.projectRoot}`,
+    ...(status.scope === "user"
+      ? ["scope: user-level rules (no project policy here)"]
+      : [`project: ${status.projectRoot}`]),
     `policy: ${status.policyPath}`,
-    ...(status.userPolicyPath
+    ...(status.userPolicyPath && status.scope === "project"
       ? [`user policy: ${status.userPolicyPath} (${status.userRuleCount} rules)`]
       : []),
-    `runtime: ${status.runtimeInstalled ? "installed" : "missing"}`,
+    ...(status.runtimePath !== undefined
+      ? [`runtime: ${status.runtimeInstalled ? "installed" : "missing"}`]
+      : []),
     `agents: ${status.agents.join(", ")}`,
     `hooks (${status.hookAgent}): ${
       status.hooksInstalled

@@ -9,11 +9,10 @@ import { installPolytokenHooks } from "./polytoken.js";
 
 type HookAgent = Exclude<AgentName, "unknown">;
 
-const HOOK_SETTINGS_FILES: Record<HookAgent, string> = {
+const HOOK_SETTINGS_FILES: Record<Exclude<HookAgent, "polytoken">, string> = {
   claude: path.join(".claude", "settings.json"),
   cursor: path.join(".cursor", "hooks.json"),
   codex: path.join(".codex", "hooks.json"),
-  polytoken: path.join(".polytoken", "hooks.json"),
 };
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -54,6 +53,28 @@ function entryHasCodecutCommand(
   );
 }
 
+function polytokenUserHooksPath(
+  homeDirectory: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const xdgConfigHome = environment.XDG_CONFIG_HOME?.trim();
+  const configDirectory =
+    xdgConfigHome && xdgConfigHome.length > 0
+      ? xdgConfigHome
+      : path.join(homeDirectory, ".config");
+  return path.join(configDirectory, "polytoken", "hooks.json");
+}
+
+function hookSettingsPath(
+  baseDirectory: string,
+  hookAgent: HookAgent,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  return hookAgent === "polytoken"
+    ? polytokenUserHooksPath(baseDirectory, environment)
+    : path.join(baseDirectory, HOOK_SETTINGS_FILES[hookAgent]);
+}
+
 const RESOLVE_BINARY =
   'CODECUT_BIN="$(command -v codecut 2>/dev/null || true)"; ' +
   '[ -x "$CODECUT_BIN" ] || CODECUT_BIN="/usr/local/bin/codecut"; ' +
@@ -83,6 +104,7 @@ export async function installUserHooks(
     case "polytoken":
       return installPolytokenHooks(homeDirectory, {
         command: userHookCommand("polytoken"),
+        settingsPath: hookSettingsPath(homeDirectory, "polytoken"),
       });
     case "claude":
       return installClaudeHooks(homeDirectory, {
@@ -100,10 +122,13 @@ export async function hasProjectHooks(
     return false;
   }
   try {
-    const raw = await readFile(
-      path.join(projectRoot, HOOK_SETTINGS_FILES[agent]),
-      "utf8",
-    );
+    // Project polytoken hooks live in-repo; user-level ones live under the
+    // XDG config path (see hookSettingsPath).
+    const settingsPath =
+      agent === "polytoken"
+        ? path.join(projectRoot, ".polytoken", "hooks.json")
+        : path.join(projectRoot, HOOK_SETTINGS_FILES[agent]);
+    const raw = await readFile(settingsPath, "utf8");
     const parsed = JSON.parse(raw) as unknown;
     const eventNames: Record<HookAgent, Partial<Record<HookStage, string>>> = {
       claude: {

@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getStatus } from "../src/commands/status.js";
+import { getStatus, inspectHookSettings } from "../src/commands/status.js";
+import { testPolicy } from "../src/commands/test.js";
 import { compilePolicy } from "../src/core/compiler.js";
 import { writePolicy } from "../src/core/project.js";
 import { installClaudeHooks } from "../src/install/claude.js";
@@ -18,6 +19,30 @@ afterEach(async () => {
 });
 
 describe("hook health status", () => {
+  it("uses the user Polytoken config path for user-level health checks", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "codecut-status-home-"));
+    temporaryDirectories.push(home);
+    const xdg = path.join(home, "xdg");
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdg;
+
+    try {
+      const installed = await inspectHookSettings(home, "polytoken", {
+        userLevel: true,
+      });
+      expect(installed.settingsPath).toBe(
+        path.join(xdg, "polytoken", "hooks.json"),
+      );
+      expect(installed.missingHookEvents).toHaveLength(5);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = previous;
+      }
+    }
+  });
+
   it("reports a missing lifecycle hook instead of a false healthy status", async () => {
     const projectRoot = await mkdtemp(
       path.join(os.tmpdir(), "codecut-status-"),
@@ -41,8 +66,84 @@ describe("hook health status", () => {
 
     const status = await getStatus(projectRoot);
 
+    expect(status.scope).toBe("project");
     expect(status.hooksInstalled).toBe(false);
     expect(status.missingHookEvents).toEqual(["Stop"]);
     expect(status.installedHookEvents).toHaveLength(3);
+  });
+});
+
+describe("user-level fallback without a project policy", () => {
+  async function withUserPolicy<T>(
+    run: (cwd: string) => Promise<T>,
+    options: { userRules?: boolean } = { userRules: true },
+  ): Promise<T> {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "codecut-noproject-"));
+    const xdg = await mkdtemp(path.join(os.tmpdir(), "codecut-xdg-"));
+    temporaryDirectories.push(cwd, xdg);
+    if (options.userRules) {
+      const policy = compilePolicy({
+        directives: [
+          {
+            text: "All unit tests must pass",
+            source: {
+              path: "~/.config/codecut/AGENTS.md",
+              line: 1,
+              scope: "user",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["~/.config/codecut/AGENTS.md"],
+        agent: "claude",
+        acceptBlockingRules: false,
+      });
+      await mkdir(path.join(xdg, "codecut"), { recursive: true });
+      await writeFile(
+        path.join(xdg, "codecut", "policy.json"),
+        JSON.stringify(policy, null, 2),
+      );
+    }
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdg;
+    try {
+      return await run(cwd);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = previous;
+      }
+    }
+  }
+
+  it("status reports the user-level rules instead of a hard error", async () => {
+    await withUserPolicy(async (cwd) => {
+      const status = await getStatus(cwd);
+      expect(status.scope).toBe("user");
+      expect(status.projectRoot).toBeUndefined();
+      expect(status.runtimePath).toBeUndefined();
+      expect(status.rules.length).toBeGreaterThan(0);
+      expect(status.userRuleCount).toBe(status.rules.length);
+    });
+  });
+
+  it("test exercises the user-level rules instead of a hard error", async () => {
+    await withUserPolicy(async (cwd) => {
+      const result = await testPolicy(cwd);
+      expect(result.scope).toBe("user");
+      expect(result.projectRoot).toBeUndefined();
+      expect(result.results.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("still errors when no policy exists anywhere, pointing at both setups", async () => {
+    await withUserPolicy(
+      async (cwd) => {
+        await expect(getStatus(cwd)).rejects.toThrow("codecut setup --user");
+        await expect(testPolicy(cwd)).rejects.toThrow("codecut setup --user");
+      },
+      { userRules: false },
+    );
   });
 });

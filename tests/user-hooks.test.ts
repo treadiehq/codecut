@@ -68,6 +68,30 @@ describe("user-level hook install", () => {
     }
   });
 
+  it("writes Polytoken hooks to the documented user config directory", async () => {
+    const home = await temporaryDirectory(".codecut-home-");
+    const xdgConfigHome = path.join(home, "xdg");
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdgConfigHome;
+
+    try {
+      const result = await installUserHooks("polytoken", home);
+
+      expect(result.settingsPath).toBe(
+        path.join(xdgConfigHome, "polytoken", "hooks.json"),
+      );
+      expect(JSON.parse(await readFile(result.settingsPath, "utf8"))).toHaveLength(
+        5,
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = previous;
+      }
+    }
+  });
+
   it("is idempotent and preserves unrelated hooks", async () => {
     const home = await temporaryDirectory(".codecut-home-");
     await mkdir(path.join(home, ".claude"), { recursive: true });

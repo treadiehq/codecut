@@ -1,6 +1,10 @@
 import { evaluatePolicy } from "../core/engine.js";
 import { findProjectRoot } from "../core/project.js";
-import { loadEffectivePolicy } from "../core/user.js";
+import {
+  loadEffectivePolicy,
+  loadUserPolicy,
+  userConfigDirectory,
+} from "../core/user.js";
 import type {
   DiffStats,
   NormalizedHookEvent,
@@ -161,20 +165,30 @@ function testRule(policy: Policy, rule: PolicyRule): TestResult {
 }
 
 export async function testPolicy(cwd: string): Promise<{
-  projectRoot: string;
+  /** Whether a project policy or only user-level rules were tested. */
+  scope: "project" | "user";
+  projectRoot?: string;
   results: TestResult[];
   passed: boolean;
 }> {
   const projectRoot = await findProjectRoot(cwd);
-  if (!projectRoot) {
+  // No project policy: fall back to the user-level rules, which user-level
+  // hooks enforce here regardless of the missing project setup.
+  const userFallback = projectRoot
+    ? undefined
+    : await loadUserPolicy(userConfigDirectory());
+  if (!projectRoot && (!userFallback || userFallback.rules.length === 0)) {
     throw new Error(
-      "No project policy found here or in a parent directory. Run `codecut setup --agent claude`.",
+      "No project policy found here or in a parent directory and no user-level rules are configured. Run `codecut setup --agent claude` for this project or `codecut setup --user` for user-level rules.",
     );
   }
-  const policy = await loadEffectivePolicy(projectRoot);
+  const policy = projectRoot
+    ? await loadEffectivePolicy(projectRoot)
+    : (userFallback as NonNullable<typeof userFallback>);
   const results = policy.rules.map((rule) => testRule(policy, rule));
   return {
-    projectRoot,
+    scope: projectRoot ? "project" : "user",
+    projectRoot: projectRoot ?? undefined,
     results,
     passed: results.every((result) => result.status !== "FAIL"),
   };
