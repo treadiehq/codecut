@@ -14,6 +14,7 @@ import {
   installClaudeHooks,
 } from "../src/install/claude.js";
 import { initializeProject } from "../src/commands/init.js";
+import { loadPolicy } from "../src/core/project.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -119,5 +120,36 @@ describe("Claude hook installation", () => {
     await expect(
       access(path.join(projectRoot, ".codecut", "policy.json")),
     ).rejects.toThrow();
+  });
+
+  it("activates an existing project policy with --accept", async () => {
+    const projectRoot = await temporaryDirectory();
+    await writeFile(
+      path.join(projectRoot, "CLAUDE.md"),
+      "- All unit tests must pass\n",
+    );
+    const initial = await initializeProject({
+      cwd: projectRoot,
+      agent: "claude",
+      accept: false,
+      force: false,
+    });
+    expect(initial.blockingRulesConfirmed).toBe(false);
+
+    const accepted = await initializeProject({
+      cwd: projectRoot,
+      agent: "claude",
+      accept: true,
+      force: false,
+    });
+
+    expect(accepted.policyCreated).toBe(false);
+    expect(accepted.policyUpdated).toBe(true);
+    expect(accepted.blockingRulesConfirmed).toBe(true);
+    expect(
+      (await loadPolicy(projectRoot)).rules
+        .filter((rule) => rule.mode === "block")
+        .every((rule) => rule.confirmed),
+    ).toBe(true);
   });
 });

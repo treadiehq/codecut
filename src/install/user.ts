@@ -16,6 +16,44 @@ const HOOK_SETTINGS_FILES: Record<HookAgent, string> = {
   polytoken: path.join(".polytoken", "hooks.json"),
 };
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isCodecutCommand(value: unknown, agent: HookAgent): boolean {
+  return (
+    typeof value === "string" &&
+    (value.includes("codecut") || value.includes("papercut")) &&
+    value.includes(`hook --agent ${agent}`)
+  );
+}
+
+function entryHasCodecutCommand(
+  entry: unknown,
+  agent: HookAgent,
+): boolean {
+  if (!isObject(entry)) {
+    return false;
+  }
+  if (agent === "cursor") {
+    return isCodecutCommand(entry.command, agent);
+  }
+  if (agent === "polytoken") {
+    const handler = entry.handler;
+    return isObject(handler) && isCodecutCommand(handler.bash, agent);
+  }
+  const handlers = entry.hooks;
+  return (
+    Array.isArray(handlers) &&
+    handlers.some(
+      (handler) =>
+        isObject(handler) &&
+        (isCodecutCommand(handler.command, agent) ||
+          isCodecutCommand(handler.commandWindows, agent)),
+    )
+  );
+}
+
 const RESOLVE_BINARY =
   'CODECUT_BIN="$(command -v codecut 2>/dev/null || true)"; ' +
   '[ -x "$CODECUT_BIN" ] || CODECUT_BIN="/usr/local/bin/codecut"; ' +
@@ -94,42 +132,41 @@ export async function hasProjectHooks(
         stop: "stop",
       },
     };
-    const includesAgentHook = (value: unknown): boolean => {
-      const serialized = JSON.stringify(value);
-      return (
-        (serialized.includes("codecut") || serialized.includes("papercut")) &&
-        serialized.includes(`hook --agent ${agent}`)
-      );
-    };
-    if (!stage) {
-      return includesAgentHook(parsed);
-    }
-    const eventName = eventNames[agent][stage];
-    if (!eventName) {
-      return false;
-    }
     if (agent === "polytoken") {
       return (
         Array.isArray(parsed) &&
         parsed.some(
           (entry) =>
-            entry &&
-            typeof entry === "object" &&
-            !Array.isArray(entry) &&
-            (entry as Record<string, unknown>).event === eventName &&
-            includesAgentHook(entry),
+            (!stage ||
+              (isObject(entry) &&
+                entry.event === eventNames[agent][stage])) &&
+            entryHasCodecutCommand(entry, agent),
         )
       );
     }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    if (!isObject(parsed)) {
       return false;
     }
-    const hooks = (parsed as Record<string, unknown>).hooks;
-    if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) {
+    const hooks = parsed.hooks;
+    if (!isObject(hooks)) {
       return false;
     }
-    const handlers = (hooks as Record<string, unknown>)[eventName];
-    return Array.isArray(handlers) && handlers.some(includesAgentHook);
+    if (!stage) {
+      return Object.values(hooks).some(
+        (entries) =>
+          Array.isArray(entries) &&
+          entries.some((entry) => entryHasCodecutCommand(entry, agent)),
+      );
+    }
+    const eventName = eventNames[agent][stage];
+    if (!eventName) {
+      return false;
+    }
+    const entries = hooks[eventName];
+    return (
+      Array.isArray(entries) &&
+      entries.some((entry) => entryHasCodecutCommand(entry, agent))
+    );
   } catch {
     return false;
   }

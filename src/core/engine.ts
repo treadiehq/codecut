@@ -340,12 +340,17 @@ function evaluateStop(
       }
       if (
         diffStats.files > rule.maxFiles ||
-        changedLines > rule.maxChangedLines
+        changedLines > rule.maxChangedLines ||
+        (rule.mode === "block" &&
+          diffStats.files > 0 &&
+          !diffStats.complete)
       ) {
         violations.push(
           violation(
             rule,
-            `Current changes span ${countLabel(diffStats.files, "file")} and ${countLabel(changedLines, "line")}.`,
+            diffStats.complete
+              ? `Current changes span ${countLabel(diffStats.files, "file")} and ${countLabel(changedLines, "line")}.`
+              : `Current changes span ${countLabel(diffStats.files, "file")}, but Codecut could not determine a complete line count.`,
             `Reduce the change to at most ${rule.maxFiles} files and ${rule.maxChangedLines} lines, or explain the larger scope in the final response. The explanation applies until the changes change.`,
           ),
         );

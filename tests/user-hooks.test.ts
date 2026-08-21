@@ -117,6 +117,78 @@ describe("project hook detection", () => {
     expect(await hasProjectHooks(projectRoot, "claude")).toBe(false);
     expect(await hasProjectHooks(projectRoot, "unknown")).toBe(false);
   });
+
+  it("inspects executable command fields without matching metadata", async () => {
+    const cursorRoot = await temporaryDirectory(".codecut-project-");
+    await mkdir(path.join(cursorRoot, ".cursor"), { recursive: true });
+    const cursorSettings = path.join(cursorRoot, ".cursor", "hooks.json");
+    await writeFile(
+      cursorSettings,
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          stop: [
+            {
+              description:
+                "Previously used codecut, now using an internal tool",
+              command: "internal-tool hook --agent cursor",
+            },
+            {
+              description: "codecut hook --agent cursor documentation",
+              command: "echo hello",
+            },
+          ],
+        },
+      }),
+      "utf8",
+    );
+
+    expect(await hasProjectHooks(cursorRoot, "cursor")).toBe(false);
+    expect(await hasProjectHooks(cursorRoot, "cursor", "stop")).toBe(false);
+
+    await writeFile(
+      cursorSettings,
+      JSON.stringify({
+        version: 1,
+        hooks: {
+          stop: [{ command: "papercut hook --agent cursor" }],
+        },
+      }),
+      "utf8",
+    );
+    expect(await hasProjectHooks(cursorRoot, "cursor", "stop")).toBe(true);
+
+    const polytokenRoot = await temporaryDirectory(".codecut-project-");
+    await mkdir(path.join(polytokenRoot, ".polytoken"), { recursive: true });
+    await writeFile(
+      path.join(polytokenRoot, ".polytoken", "hooks.json"),
+      JSON.stringify([
+        {
+          event: "stop",
+          _comment: "Previously used codecut",
+          handler: { bash: "internal-tool hook --agent polytoken" },
+        },
+      ]),
+      "utf8",
+    );
+    expect(
+      await hasProjectHooks(polytokenRoot, "polytoken", "stop"),
+    ).toBe(false);
+    await writeFile(
+      path.join(polytokenRoot, ".polytoken", "hooks.json"),
+      JSON.stringify([
+        {
+          name: "codecut-stop",
+          event: "stop",
+          handler: { bash: "codecut hook --agent polytoken" },
+        },
+      ]),
+      "utf8",
+    );
+    expect(
+      await hasProjectHooks(polytokenRoot, "polytoken", "stop"),
+    ).toBe(true);
+  });
 });
 
 describe("user state paths", () => {

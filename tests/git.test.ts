@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { workingTreeFingerprint } from "../src/core/git.js";
+import {
+  inspectDiff,
+  workingTreeFingerprint,
+} from "../src/core/git.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -72,6 +75,79 @@ describe("working-tree fingerprints", () => {
 
     expect(staged).toBe(untracked);
     expect(committed).toBe(untracked);
+  });
+
+  it("counts staged and unstaged content before the initial commit", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-initial-diff-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    const filePath = path.join(directory, "massive.ts");
+    await writeFile(
+      filePath,
+      Array.from({ length: 300 }, (_, index) => `export const a${index} = 1;`)
+        .join("\n")
+        .concat("\n"),
+    );
+    await execFileAsync("git", ["add", "massive.ts"], { cwd: directory });
+    await writeFile(
+      filePath,
+      Array.from({ length: 600 }, (_, index) => `export const a${index} = 1;`)
+        .join("\n")
+        .concat("\n"),
+    );
+
+    const diff = await inspectDiff(directory, []);
+
+    expect(diff).toMatchObject({
+      files: 1,
+      added: 600,
+      deleted: 0,
+      complete: true,
+    });
+  });
+
+  it("counts untracked text files after commits exist", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-untracked-diff-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    await writeFile(path.join(directory, "README.md"), "# Example\n");
+    await execFileAsync("git", ["add", "README.md"], { cwd: directory });
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+      { cwd: directory },
+    );
+    await writeFile(
+      path.join(directory, "generated.ts"),
+      Array.from(
+        { length: 550 },
+        (_, index) => `export const generated${index} = 1;`,
+      )
+        .join("\n")
+        .concat("\n"),
+    );
+
+    const diff = await inspectDiff(directory, []);
+
+    expect(diff).toMatchObject({
+      files: 1,
+      added: 550,
+      deleted: 0,
+      complete: true,
+    });
   });
 
   it("tracks content when the policy root is below the Git root", async () => {

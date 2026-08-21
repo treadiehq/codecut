@@ -156,6 +156,7 @@ export function parseDirectives(
     const setextHeading =
       line.trim().length > 0 &&
       !/^\s*(?:[-*+]|\d+[.)])\s+/.test(line) &&
+      !/^\s*>/.test(line) &&
       /^(?:=+|-+)$/.test(setextUnderline ?? "")
         ? {
             level: setextUnderline?.startsWith("=") ? 1 : 2,

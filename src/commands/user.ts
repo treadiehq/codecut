@@ -1,5 +1,5 @@
 import { access, mkdir, writeFile } from "node:fs/promises";
-import { compilePolicy } from "../core/compiler.js";
+import { compilePolicy, confirmBlockingRules } from "../core/compiler.js";
 import { writePolicyDocument } from "../core/project.js";
 import type { Policy } from "../core/schema.js";
 import {
@@ -40,6 +40,7 @@ export type UserSetupResult = {
   policyPath: string;
   rulesFileCreated: boolean;
   policyCreated: boolean;
+  policyUpdated: boolean;
   directiveCount: number;
   ruleCount: number;
   blockingRulesConfirmed: boolean;
@@ -72,12 +73,19 @@ export async function setupUserRules(options: {
 
   let policy: Policy;
   let policyCreated = false;
+  let policyUpdated = false;
   let directiveCount: number;
   const existingPolicy = options.refresh
     ? undefined
     : await loadUserPolicy(configDirectory);
   if (existingPolicy) {
-    policy = existingPolicy;
+    policy = options.accept
+      ? confirmBlockingRules(existingPolicy)
+      : existingPolicy;
+    if (policy !== existingPolicy) {
+      await writePolicyDocument(policyPath, policy);
+      policyUpdated = true;
+    }
     directiveCount = existingPolicy.rules.length;
   } else {
     const discovery = await discoverUserDirectives(configDirectory);
@@ -99,6 +107,7 @@ export async function setupUserRules(options: {
     policyPath,
     rulesFileCreated,
     policyCreated,
+    policyUpdated,
     directiveCount,
     ruleCount: policy.rules.length,
     blockingRulesConfirmed: policy.rules

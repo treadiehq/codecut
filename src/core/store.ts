@@ -2,6 +2,34 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { receiptSchema, type Receipt } from "./schema.js";
 
+function partialSessionId(line: string): string | undefined {
+  const match =
+    /(?:^\s*\{|,)\s*"sessionId"\s*:\s*("(?:[^"\\\u0000-\u001f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*")/.exec(
+      line,
+    );
+  if (!match?.[1]) {
+    return undefined;
+  }
+  try {
+    const value: unknown = JSON.parse(match[1]);
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function malformedEventState(
+  eventsFile: string,
+  lineNumber: number,
+  error: unknown,
+): Error {
+  return new Error(
+    `Event state is malformed at ${eventsFile}:${lineNumber}: ${
+      error instanceof Error ? error.message : String(error)
+    }`,
+  );
+}
+
 export async function appendReceipts(
   eventsFile: string,
   receipts: Receipt[],
@@ -39,21 +67,32 @@ export async function readSessionReceipts(
       continue;
     }
 
+    let parsed: unknown;
     try {
-      const result = receiptSchema.safeParse(JSON.parse(line));
-      if (!result.success) {
-        throw new Error(result.error.message);
-      }
-      if (result.data.sessionId === sessionId) {
-        receipts.push(result.data);
-      }
+      parsed = JSON.parse(line);
     } catch (error) {
-      throw new Error(
-        `Event state is malformed at ${eventsFile}:${index + 1}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
+      const owner = partialSessionId(line);
+      if (owner !== undefined && owner !== sessionId) {
+        continue;
+      }
+      throw malformedEventState(eventsFile, index + 1, error);
+    }
+    const owner =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>).sessionId
+        : undefined;
+    if (typeof owner === "string" && owner !== sessionId) {
+      continue;
+    }
+    const result = receiptSchema.safeParse(parsed);
+    if (!result.success) {
+      throw malformedEventState(
+        eventsFile,
+        index + 1,
+        new Error(result.error.message),
       );
     }
+    receipts.push(result.data);
   }
 
   return receipts.sort((left, right) =>

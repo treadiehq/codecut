@@ -245,6 +245,39 @@ describe("starter policy compilation", () => {
     ]);
   });
 
+  it("keeps punctuation-separated compound directives advisory", () => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text: "All unit tests must pass; verify the build",
+          source: { path: "CLAUDE.md", line: 1, scope: "project" },
+        },
+        {
+          text: "Treat warnings as errors. All unit tests must pass.",
+          source: { path: "CLAUDE.md", line: 2, scope: "project" },
+        },
+        {
+          text: "All unit tests must pass, verify tests locally",
+          source: { path: "CLAUDE.md", line: 3, scope: "project" },
+        },
+        {
+          text: "All unit tests must pass.",
+          source: { path: "CLAUDE.md", line: 4, scope: "project" },
+        },
+      ],
+      sources: ["CLAUDE.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules.map((rule) => rule.type)).toEqual([
+      "advisory",
+      "advisory",
+      "advisory",
+      "require-passing-tests",
+    ]);
+  });
+
   it("parses a comment line limit from directive text", () => {
     const compiled = compilePolicy({
       directives: [
@@ -615,6 +648,35 @@ describe("starter policy enforcement", () => {
 
     expect(decision.outcome).toBe("warn");
     expect(decision.violations[0]?.directive).toContain("blast radius");
+  });
+
+  it("blocks when a blocking blast-radius rule has an incomplete line count", () => {
+    const activePolicy = policy();
+    const blastRule = activePolicy.rules.find(
+      (rule) => rule.type === "blast-radius",
+    );
+    if (!blastRule || blastRule.type !== "blast-radius") {
+      throw new Error("blast-radius rule missing");
+    }
+    blastRule.mode = "block";
+    blastRule.confirmed = true;
+
+    const decision = evaluatePolicy({
+      policy: activePolicy,
+      event: hookEvent("stop"),
+      receipts: [edit(), verification()],
+      diffStats: {
+        files: 1,
+        added: 0,
+        deleted: 0,
+        complete: false,
+      },
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(decision.violations[0]?.evidence).toContain(
+      "could not determine a complete line count",
+    );
   });
 
   it("does not repeat an explained blast-radius warning for an unchanged diff", () => {

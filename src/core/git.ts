@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readdir, readlink } from "node:fs/promises";
+import { lstat, readdir, readlink, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
 import type { DiffStats, Receipt } from "./schema.js";
@@ -120,12 +120,15 @@ async function hashPath(
 async function workingTreeState(
   cwd: string,
 ): Promise<{ fingerprint: string; paths: string[]; git: boolean }> {
-  const gitRoot = (await git(cwd, ["rev-parse", "--show-toplevel"]))?.trim();
+  const projectRoot = await realpath(cwd);
+  const gitRoot = (
+    await git(projectRoot, ["rev-parse", "--show-toplevel"])
+  )?.trim();
   if (!gitRoot) {
     return filesystemState(cwd);
   }
   const prefix = path
-    .relative(gitRoot, cwd)
+    .relative(gitRoot, projectRoot)
     .split(path.sep)
     .join("/");
   const pathspec = prefix || ".";
@@ -207,6 +210,125 @@ export async function workingTreeFingerprint(
   return (await workingTreeState(cwd)).fingerprint;
 }
 
+function projectRelativePath(
+  gitRoot: string,
+  cwd: string,
+  filePath: string,
+): string | undefined {
+  const prefix = path
+    .relative(gitRoot, cwd)
+    .split(path.sep)
+    .join("/");
+  if (!prefix) {
+    return filePath;
+  }
+  return filePath.startsWith(`${prefix}/`)
+    ? filePath.slice(prefix.length + 1)
+    : undefined;
+}
+
+async function listGitProjectFiles(
+  cwd: string,
+  modes: string[],
+): Promise<string[] | undefined> {
+  const projectRoot = await realpath(cwd);
+  const gitRoot = (
+    await git(projectRoot, ["rev-parse", "--show-toplevel"])
+  )?.trim();
+  if (!gitRoot) {
+    return undefined;
+  }
+  const prefix = path
+    .relative(gitRoot, projectRoot)
+    .split(path.sep)
+    .join("/");
+  const output = await git(gitRoot, [
+    "ls-files",
+    "-z",
+    ...modes,
+    "--exclude-standard",
+    "--",
+    prefix || ".",
+  ]);
+  if (output === undefined) {
+    return undefined;
+  }
+  return [
+    ...new Set(
+      output
+        .split("\0")
+        .filter(Boolean)
+        .map((filePath) => projectRelativePath(gitRoot, projectRoot, filePath))
+        .filter((filePath): filePath is string => Boolean(filePath))
+        .filter(
+          (filePath) =>
+            filePath !== ".codecut" &&
+            !filePath.startsWith(".codecut/"),
+        ),
+    ),
+  ].sort();
+}
+
+async function countCurrentFileLines(
+  cwd: string,
+  files: string[],
+): Promise<{
+  paths: Set<string>;
+  added: number;
+  complete: boolean;
+}> {
+  const paths = new Set<string>();
+  let added = 0;
+  let complete = true;
+
+  for (const filePath of files) {
+    const absolutePath = path.resolve(cwd, filePath);
+    let stats;
+    try {
+      stats = await lstat(absolutePath);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    paths.add(filePath);
+    if (stats.isSymbolicLink()) {
+      continue;
+    }
+    if (!stats.isFile()) {
+      complete = false;
+      continue;
+    }
+
+    let bytes = 0;
+    let lineFeeds = 0;
+    let lastByte: number | undefined;
+    let binary = false;
+    for await (const chunk of createReadStream(absolutePath)) {
+      const buffer = chunk as Buffer;
+      bytes += buffer.length;
+      lastByte = buffer.at(-1);
+      if (buffer.includes(0)) {
+        binary = true;
+        break;
+      }
+      for (const byte of buffer) {
+        if (byte === 10) {
+          lineFeeds += 1;
+        }
+      }
+    }
+    if (binary) {
+      complete = false;
+      continue;
+    }
+    added += lineFeeds + (bytes > 0 && lastByte !== 10 ? 1 : 0);
+  }
+
+  return { paths, added, complete };
+}
+
 function parseNumstat(output: string): {
   paths: Set<string>;
   added: number;
@@ -252,26 +374,41 @@ export async function inspectDiff(
   const state = await workingTreeState(cwd);
   const parsed = parseNumstat("");
   if (state.git) {
-    const againstHead = await git(cwd, [
-      "diff",
-      "--numstat",
-      "--no-renames",
-      "HEAD",
-      "--",
-    ]);
-    const unstaged =
-      againstHead ??
-      (await git(cwd, ["diff", "--numstat", "--no-renames", "--"]));
-    Object.assign(parsed, parseNumstat(unstaged ?? ""));
-    const untracked = await git(cwd, [
-      "ls-files",
-      "--others",
-      "--exclude-standard",
-    ]);
-    if (untracked !== undefined) {
-      for (const file of untracked.split(/\r?\n/).filter(Boolean)) {
-        parsed.paths.add(file);
+    const head = (await git(cwd, ["rev-parse", "--verify", "HEAD"]))?.trim();
+    if (head) {
+      const againstHead = await git(cwd, [
+        "diff",
+        "--numstat",
+        "--no-renames",
+        "HEAD",
+        "--",
+      ]);
+      if (againstHead === undefined) {
         parsed.complete = false;
+      } else {
+        Object.assign(parsed, parseNumstat(againstHead));
+      }
+      const untracked = await listGitProjectFiles(cwd, ["--others"]);
+      if (untracked === undefined) {
+        parsed.complete = false;
+      } else {
+        const counted = await countCurrentFileLines(cwd, untracked);
+        for (const filePath of counted.paths) {
+          parsed.paths.add(filePath);
+        }
+        parsed.added += counted.added;
+        parsed.complete &&= counted.complete;
+      }
+    } else {
+      const initialFiles = await listGitProjectFiles(cwd, [
+        "--cached",
+        "--others",
+      ]);
+      if (initialFiles === undefined) {
+        parsed.complete = false;
+      } else {
+        const counted = await countCurrentFileLines(cwd, initialFiles);
+        Object.assign(parsed, counted);
       }
     }
   } else {

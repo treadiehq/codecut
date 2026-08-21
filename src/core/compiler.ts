@@ -109,6 +109,13 @@ function hasNegation(normalized: string): boolean {
   );
 }
 
+function hasCompoundStructure(normalized: string): boolean {
+  return (
+    /\b(?:and|or|but)\b/.test(normalized) ||
+    /[;,.!?]\s+[a-z]/.test(normalized)
+  );
+}
+
 function classifyDirective(
   directive: Directive,
   acceptBlockingRules: boolean,
@@ -152,7 +159,7 @@ function classifyDirective(
     verificationRule,
     commentRule,
   ].filter(Boolean).length;
-  if (categoryCount > 1 && /\b(?:and|or|but)\b/.test(normalized)) {
+  if (categoryCount > 1 && hasCompoundStructure(normalized)) {
     return {
       id: ruleId("advisory", directive.text),
       type: "advisory",
@@ -306,6 +313,26 @@ export function compilePolicy(options: {
         directive,
         options.acceptBlockingRules || usingStarterPolicy,
       ),
+    ),
+  };
+}
+
+export function confirmBlockingRules(
+  policy: Policy,
+  now = new Date(),
+): Policy {
+  if (
+    !policy.rules.some((rule) => rule.mode === "block" && !rule.confirmed)
+  ) {
+    return policy;
+  }
+  return {
+    ...policy,
+    updatedAt: now.toISOString(),
+    rules: policy.rules.map((rule) =>
+      rule.mode === "block" && !rule.confirmed
+        ? { ...rule, confirmed: true }
+        : rule,
     ),
   };
 }

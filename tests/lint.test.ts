@@ -10,7 +10,10 @@ import {
   runLint,
   runLintCommand,
 } from "../src/commands/lint.js";
-import { scanComments } from "../src/core/comments.js";
+import {
+  scanComments,
+  stripNonExecutableText,
+} from "../src/core/comments.js";
 import { diffTotals, parseUnifiedDiff } from "../src/core/diff.js";
 
 const SAMPLE_DIFF = [
@@ -324,6 +327,94 @@ describe("lint checks", () => {
         (finding) => finding.check === "debug-artifacts",
       ),
     ).toEqual([]);
+  });
+
+  it("detects debug artifacts after decrement operators", () => {
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.ts b/src/x.ts",
+          "--- a/src/x.ts",
+          "+++ b/src/x.ts",
+          "@@ -0,0 +1,3 @@",
+          '+while (count-- > 0) console.log("DEBUG:", count);',
+          '+if (items[index]-- > 0) console.debug("DEBUG");',
+          '+for (; remaining-- > 0;) console.trace("DEBUG");',
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+
+    expect(
+      result.findings
+        .filter((finding) => finding.check === "debug-artifacts")
+        .map((finding) => finding.line),
+    ).toEqual([1, 2, 3]);
+  });
+
+  it("detects debug artifacts after JavaScript regex literals", () => {
+    const stripped = stripNonExecutableText([
+      {
+        line: 1,
+        text: String.raw`const isUrl = /^https?:\/\//.test(str); console.log(isUrl);`,
+      },
+    ]);
+    expect(stripped[0]?.text).toContain("console.log");
+
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/x.tsx b/src/x.tsx",
+          "--- a/src/x.tsx",
+          "+++ b/src/x.tsx",
+          "@@ -0,0 +1,7 @@",
+          String.raw`+const isUrl = /^https?:\/\//.test(str); console.log(isUrl);`,
+          String.raw`+const slash = /[//]/; console.debug(slash);`,
+          "+const ratio = total / count; console.trace(ratio);",
+          String.raw`+const matcher = () => /^https?:\/\//; console.log(matcher);`,
+          "+const node = <div></div>; console.log(node);",
+          "+const debugPattern = /console.log/;",
+          "+const safe = 1; // console.log(safe);",
+          "",
+        ].join("\n"),
+      ),
+      defaultLintConfig(),
+    );
+
+    expect(
+      result.findings
+        .filter((finding) => finding.check === "debug-artifacts")
+        .map((finding) => finding.line),
+    ).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("still strips dash comments in languages that support them", () => {
+    const config = defaultLintConfig();
+    config.debugPatterns = [
+      ...config.debugPatterns,
+      String.raw`\bcustom_debug\s*\(`,
+    ];
+    const result = runLint(
+      parseUnifiedDiff(
+        [
+          "diff --git a/src/query.sql b/src/query.sql",
+          "--- a/src/query.sql",
+          "+++ b/src/query.sql",
+          "@@ -0,0 +1,2 @@",
+          "+SELECT 1; -- custom_debug() is only documentation",
+          "+SELECT custom_debug();",
+          "",
+        ].join("\n"),
+      ),
+      config,
+    );
+
+    expect(
+      result.findings
+        .filter((finding) => finding.check === "debug-artifacts")
+        .map((finding) => finding.line),
+    ).toEqual([2]);
   });
 
   it("ignores debug-like text in comments and strings", () => {

@@ -34,7 +34,8 @@ type ExecutableContext =
   | { kind: "code" }
   | { kind: "string"; quote: '"' | "'"; escaped: boolean }
   | { kind: "template"; escaped: boolean }
-  | { kind: "template-expression"; braceDepth: number };
+  | { kind: "template-expression"; braceDepth: number }
+  | { kind: "regex"; escaped: boolean; inCharacterClass: boolean };
 
 export type HashCommentMode =
   | "anywhere"
@@ -42,18 +43,43 @@ export type HashCommentMode =
   | "whitespace"
   | "never";
 
+function canStartRegexLiteral(code: string): boolean {
+  const before = code.trimEnd();
+  if (before.length === 0) {
+    return true;
+  }
+  if (/(?:\+\+|--)$/.test(before)) {
+    return false;
+  }
+  if (
+    /(?:=>|\b(?:await|case|delete|do|else|in|instanceof|new|of|return|throw|typeof|void|yield))$/.test(
+      before,
+    )
+  ) {
+    return true;
+  }
+  return /[([{=,:;!&|?+\-*%^~]$/.test(before);
+}
+
 /**
  * Keep executable source text while removing comments and string contents.
- * Template text is removed while `${...}` expressions remain executable.
+ * Template and regex literal text is removed while `${...}` expressions
+ * remain executable.
  * Scanner state carries across contiguous added lines, but resets across diff
  * gaps where unseen source may have closed an open construct.
  */
 export function stripNonExecutableText(
   lines: CommentLine[],
-  options: { hashComments?: HashCommentMode } = {},
+  options: {
+    hashComments?: HashCommentMode;
+    dashComments?: boolean;
+    regexLiterals?: boolean;
+  } = {},
 ): CommentLine[] {
   const codeLines: CommentLine[] = [];
   const hashComments = options.hashComments ?? "whitespace";
+  const dashComments = options.dashComments ?? true;
+  const regexLiterals = options.regexLiterals ?? true;
   let contexts: ExecutableContext[] = [{ kind: "code" }];
   let inBlockComment = false;
   let previousLine: number | undefined;
@@ -114,6 +140,22 @@ export function stripNonExecutableText(
         continue;
       }
 
+      if (context.kind === "regex") {
+        if (context.escaped) {
+          context.escaped = false;
+        } else if (current === "\\") {
+          context.escaped = true;
+        } else if (current === "[" && !context.inCharacterClass) {
+          context.inCharacterClass = true;
+        } else if (current === "]" && context.inCharacterClass) {
+          context.inCharacterClass = false;
+        } else if (current === "/" && !context.inCharacterClass) {
+          code += current;
+          contexts.pop();
+        }
+        continue;
+      }
+
       if (current === '"' || current === "'") {
         code += current;
         contexts.push({ kind: "string", quote: current, escaped: false });
@@ -132,6 +174,19 @@ export function stripNonExecutableText(
       if (current === "/" && next === "/") {
         break;
       }
+      if (
+        regexLiterals &&
+        current === "/" &&
+        canStartRegexLiteral(code)
+      ) {
+        code += current;
+        contexts.push({
+          kind: "regex",
+          escaped: false,
+          inCharacterClass: false,
+        });
+        continue;
+      }
       if (current === "#") {
         const startsHashComment =
           (next === "!" && index === 0) ||
@@ -144,6 +199,7 @@ export function stripNonExecutableText(
         }
       }
       if (
+        dashComments &&
         current === "-" &&
         next === "-" &&
         (text[index + 2] === undefined || /\s/.test(text[index + 2] ?? ""))
@@ -166,6 +222,9 @@ export function stripNonExecutableText(
       code += current;
     }
 
+    if (contexts.at(-1)?.kind === "regex") {
+      contexts.pop();
+    }
     codeLines.push({ line, text: code });
   }
 

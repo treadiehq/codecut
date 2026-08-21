@@ -80,7 +80,13 @@ async function setupUser(
       `rules file: ${displayPath(result.rulesPath)}${
         result.rulesFileCreated ? " (created)" : ""
       }`,
-      `policy: ${result.policyCreated ? "compiled" : "preserved"} (${result.ruleCount} rules)`,
+      `policy: ${
+        result.policyCreated
+          ? "compiled"
+          : result.policyUpdated
+            ? "updated"
+            : "preserved"
+      } (${result.ruleCount} rules)`,
       ...(hooksLine ? [hooksLine] : []),
       "scope: merged into every project policy when hooks run; project rules win on overlap",
       ...(result.rulesFileCreated || result.ruleCount === 0
@@ -92,7 +98,7 @@ async function setupUser(
         ? [
             result.blockingRulesConfirmed
               ? "blocking rules: active"
-              : "blocking rules: warnings only; review them, then rerun with --refresh-policy --accept",
+              : "blocking rules: warnings only; review them, then rerun with --accept",
           ]
         : []),
     ].join("\n") + "\n",
@@ -151,13 +157,19 @@ async function setup(
   process.stdout.write(
     [
       `Codecut is ready for ${targetAgent}.`,
-      `policy: ${result.policyCreated ? "created" : "preserved"} (${result.ruleCount} rules)`,
+      `policy: ${
+        result.policyCreated
+          ? "created"
+          : result.policyUpdated
+            ? "updated"
+            : "preserved"
+      } (${result.ruleCount} rules)`,
       `runtime: ${result.runtimeUpdated ? "installed" : "current"}`,
       `hooks: healthy (${status.installedHookEvents.length} events)`,
       `self-test: ${passed} passed, ${skipped} skipped`,
       result.blockingRulesConfirmed
         ? "blocking rules: active"
-        : "blocking rules: warnings only; review them, then rerun with --refresh-policy --accept",
+        : "blocking rules: warnings only; review them, then rerun with --accept",
     ].join("\n") + "\n",
   );
 }
@@ -283,7 +295,7 @@ Examples:
           `policy rules: ${result.ruleCount}`,
           result.blockingRulesConfirmed
             ? "blocking rules: active"
-            : "blocking rules: warnings only; review them, then rerun with --force --accept",
+            : "blocking rules: warnings only; review them, then rerun with --accept",
           "next: codecut status && codecut test",
         ].join("\n") + "\n",
       );

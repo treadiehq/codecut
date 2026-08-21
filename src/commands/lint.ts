@@ -194,6 +194,12 @@ function hashCommentMode(language: SourceLanguage): HashCommentMode {
   return language === "javascript" ? "never" : "whitespace";
 }
 
+function supportsDashComments(filePath: string): boolean {
+  return /\.(?:ada|adb|ads|agda|applescript|elm|hs|idr|lean|lhs|lua|purs|sql|vhd|vhdl)$/i.test(
+    filePath,
+  );
+}
+
 function truncate(value: string, max = 160): string {
   const collapsed = value.trim().replace(/\s+/g, " ");
   return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
@@ -271,6 +277,8 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
       const language = sourceLanguageForPath(file.path);
       const codeLines = stripNonExecutableText(file.addedLines, {
         hashComments: hashCommentMode(language),
+        dashComments: supportsDashComments(file.path),
+        regexLiterals: language === "javascript",
       });
       const debugPatterns = debugArtifactPatternsForPath(
         file.path,

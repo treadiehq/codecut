@@ -146,9 +146,13 @@ export function formatPolytokenOutput(
   decision: PolicyDecision,
 ): JsonRecord {
   if (event.stage === "pre-tool") {
-    return decision.outcome === "block"
-      ? { outcome: "deny", reason: formatViolationMessage(decision) }
-      : { outcome: "allow" };
+    if (decision.outcome === "block") {
+      return { outcome: "deny", reason: formatViolationMessage(decision) };
+    }
+    if (decision.outcome === "warn") {
+      return { outcome: "allow", reason: formatViolationMessage(decision) };
+    }
+    return { outcome: "allow" };
   }
 
   if (event.stage === "stop") {

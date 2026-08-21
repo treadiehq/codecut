@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { setupUserRules } from "../src/commands/user.js";
@@ -90,7 +90,7 @@ describe("user rules setup", () => {
     expect(template).toContain("codecut setup --user");
   });
 
-  it("compiles user rules with user scope and honors --accept", async () => {
+  it("activates existing user rules with --accept", async () => {
     const configDirectory = await temporaryDirectory(".codecut-user-");
     await writeFile(
       userRulesPath(configDirectory),
@@ -113,12 +113,19 @@ describe("user rules setup", () => {
 
     const withAccept = await setupUserRules({
       accept: true,
-      refresh: true,
+      refresh: false,
       configDirectory,
     });
+    expect(withAccept.policyCreated).toBe(false);
+    expect(withAccept.policyUpdated).toBe(true);
     expect(withAccept.blockingRulesConfirmed).toBe(true);
 
     const policy = await loadUserPolicy(configDirectory);
+    expect(
+      policy?.rules
+        .filter((rule) => rule.mode === "block")
+        .every((rule) => rule.confirmed),
+    ).toBe(true);
     expect(policy?.rules.every((rule) => rule.source.scope === "user")).toBe(
       true,
     );
@@ -166,6 +173,40 @@ describe("user rules setup", () => {
     expect(discovery.directives).toHaveLength(1);
     expect(discovery.directives[0]?.text).toContain(
       "Keep prompts, agent instructions",
+    );
+  });
+
+  it("reports a directory used as the user rules file", async () => {
+    const configDirectory = await temporaryDirectory(".codecut-user-");
+    await mkdir(userRulesPath(configDirectory));
+
+    await expect(
+      setupUserRules({
+        accept: false,
+        refresh: false,
+        configDirectory,
+      }),
+    ).rejects.toThrow(
+      /Cannot read Codecut user rules file .*AGENTS\.md: expected a file but found a directory/,
+    );
+  });
+
+  it("reports a directory used as the user policy", async () => {
+    const configDirectory = await temporaryDirectory(".codecut-user-");
+    await writeFile(
+      userRulesPath(configDirectory),
+      "- All unit tests must pass\n",
+    );
+    await mkdir(userPolicyPath(configDirectory));
+
+    await expect(
+      setupUserRules({
+        accept: false,
+        refresh: false,
+        configDirectory,
+      }),
+    ).rejects.toThrow(
+      /Cannot read Codecut user policy .*policy\.json: expected a file but found a directory/,
     );
   });
 });
@@ -339,7 +380,7 @@ describe("effective policy loading", () => {
 
     await expect(
       loadEffectivePolicy(projectRoot, configDirectory),
-    ).rejects.toThrow();
+    ).rejects.toThrow("Invalid Codecut user policy");
 
     const result = await loadEnforcementPolicy(
       projectRoot,

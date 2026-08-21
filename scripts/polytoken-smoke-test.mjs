@@ -60,7 +60,7 @@ try {
     : path.join(repositoryRoot, "dist", "codecut.cjs");
   const setup = run(
     bundle,
-    ["setup", "--agent", "polytoken", "--accept"],
+    ["setup", "--agent", "polytoken"],
     fixture,
   );
   assert(
@@ -87,6 +87,28 @@ try {
     assert(events.includes(event), `${event} hook missing`);
   }
 
+  const warning = hook(runtime, fixture, "polytoken-warning", {
+    event: "pre_tool_use",
+    tool_name: "shell",
+    input: { command: "ssh runner npm test" },
+  });
+  assert(
+    warning.outcome === "allow" &&
+      warning.reason?.includes("Use local machines for testing"),
+    "Polytoken remote test warning was not shown",
+  );
+
+  run(
+    bundle,
+    [
+      "setup",
+      "--agent",
+      "polytoken",
+      "--refresh-policy",
+      "--accept",
+    ],
+    fixture,
+  );
   const remote = hook(runtime, fixture, "polytoken-smoke", {
     event: "pre_tool_use",
     tool_name: "shell",
@@ -139,7 +161,7 @@ try {
     [
       "PASS native Polytoken one-command setup",
       "PASS native Polytoken hook configuration",
-      "PASS Polytoken pre-tool denial",
+      "PASS Polytoken pre-tool warning and denial",
       "PASS Polytoken stop recovery and verified completion",
     ].join("\n") + "\n",
   );

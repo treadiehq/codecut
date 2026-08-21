@@ -63,6 +63,26 @@ describe("native Polytoken integration", () => {
     });
   });
 
+  it("surfaces pre-tool warnings while allowing the tool", () => {
+    const event = normalizePolytokenEvent(
+      {
+        event: "pre_tool_use",
+        tool_name: "shell",
+        input: { command: "ssh runner npm test" },
+      },
+      new Date("2026-07-29T12:00:00.000Z"),
+      {
+        POLYTOKEN_SESSION_ID: "session-1",
+        POLYTOKEN_PROJECT_DIR: "/tmp/project",
+      },
+    );
+
+    expect(formatPolytokenOutput(event, warning)).toMatchObject({
+      outcome: "allow",
+      reason: expect.stringContaining("Use local machines for testing"),
+    });
+  });
+
   it("continues the agent loop when stop checks need recovery", () => {
     const event = normalizePolytokenEvent(
       { event: "stop" },

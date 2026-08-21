@@ -8,6 +8,8 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { compilePolicy } from "../src/core/compiler.js";
+import { writePolicy } from "../src/core/project.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -186,6 +188,70 @@ describe("hook error enforcement", () => {
       expect(JSON.parse(result.stdout)).toMatchObject(testCase.expected);
       expect(result.stderr).toContain("Codecut hook error");
     }
+  });
+
+  it("enforces pre-tool rules despite another session's malformed state", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-cross-session-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [
+          {
+            text: "Use local machines for testing",
+            source: {
+              path: "AGENTS.md",
+              line: 1,
+              scope: "project",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "claude",
+        acceptBlockingRules: true,
+      }),
+    );
+    await writeFile(
+      path.join(projectRoot, ".codecut", "events.jsonl"),
+      '{"version":1,"id":"broken","timestamp":"2026-01-01T00:00:00.000Z","sessionId":"session-a"\n',
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(repositoryRoot, "src", "cli.ts"),
+        "hook",
+        "--agent",
+        "claude",
+      ],
+      {
+        cwd: repositoryRoot,
+        input: JSON.stringify({
+          hook_event_name: "PreToolUse",
+          session_id: "session-b",
+          cwd: projectRoot,
+          tool_name: "Bash",
+          tool_input: { command: "ssh runner npm test" },
+        }),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+        },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      hookSpecificOutput: { permissionDecision: "deny" },
+    });
+    expect(result.stderr).not.toContain("Codecut hook error");
   });
 });
 

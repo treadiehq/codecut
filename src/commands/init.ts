@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { compilePolicy } from "../core/compiler.js";
+import { compilePolicy, confirmBlockingRules } from "../core/compiler.js";
 import { discoverDirectives } from "../core/discovery.js";
 import {
   ensureLocalLogIgnored,
@@ -35,6 +35,7 @@ export type InitResult = {
   ruleCount: number;
   blockingRulesConfirmed: boolean;
   policyCreated: boolean;
+  policyUpdated: boolean;
   runtimePath?: string;
   runtimeUpdated: boolean;
   hookSettingsPath: string;
@@ -66,6 +67,7 @@ export async function initializeProject(options: {
     await validateClaudeSettings(projectRoot);
   }
   let policyCreated = false;
+  let policyUpdated = false;
   let policy: Policy;
   let directiveCount: number;
   try {
@@ -73,14 +75,21 @@ export async function initializeProject(options: {
       throw new Error("refresh requested");
     }
     await access(policyPath(projectRoot));
-    policy = await loadPolicy(projectRoot);
+    const existingPolicy = await loadPolicy(projectRoot);
+    policy = existingPolicy;
     if (!policy.agents.includes(options.agent)) {
       policy = {
         ...policy,
         updatedAt: new Date().toISOString(),
         agents: [...policy.agents, options.agent],
       };
+    }
+    if (options.accept) {
+      policy = confirmBlockingRules(policy);
+    }
+    if (policy !== existingPolicy) {
       await writePolicy(projectRoot, policy, { force: true });
+      policyUpdated = true;
     }
     directiveCount = policy.rules.length;
   } catch {
@@ -118,6 +127,7 @@ export async function initializeProject(options: {
       .filter((rule) => rule.mode === "block")
       .every((rule) => rule.confirmed),
     policyCreated,
+    policyUpdated,
     runtimePath: runtime?.runtimePath,
     runtimeUpdated: runtime?.updated ?? false,
     hookSettingsPath: hooks.settingsPath,

@@ -65,6 +65,30 @@ export function displayPath(absolutePath: string): string {
     : absolutePath;
 }
 
+function userConfigReadError(
+  kind: "rules file" | "policy",
+  filePath: string,
+  error: unknown,
+): Error {
+  const code =
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string"
+      ? error.code
+      : undefined;
+  const problem =
+    code === "EISDIR"
+      ? "expected a file but found a directory"
+      : code === "EACCES" || code === "EPERM"
+        ? "permission was denied"
+        : error instanceof Error
+          ? error.message
+          : String(error);
+  return new Error(
+    `Cannot read Codecut user ${kind} ${displayPath(filePath)}: ${problem}. Repair the path, then rerun \`codecut setup --user --refresh-policy\`.`,
+  );
+}
+
 export async function discoverUserDirectives(configDirectory: string): Promise<{
   directives: Directive[];
   sources: string[];
@@ -81,7 +105,7 @@ export async function discoverUserDirectives(configDirectory: string): Promise<{
     ) {
       return { directives: [], sources: [] };
     }
-    throw error;
+    throw userConfigReadError("rules file", rulesFile, error);
   }
 
   return {
@@ -97,9 +121,10 @@ export async function discoverUserDirectives(configDirectory: string): Promise<{
 export async function loadUserPolicy(
   configDirectory: string,
 ): Promise<Policy | undefined> {
+  const policyFile = userPolicyPath(configDirectory);
   let raw: string;
   try {
-    raw = await readFile(userPolicyPath(configDirectory), "utf8");
+    raw = await readFile(policyFile, "utf8");
   } catch (error) {
     if (
       error instanceof Error &&
@@ -108,9 +133,16 @@ export async function loadUserPolicy(
     ) {
       return undefined;
     }
-    throw error;
+    throw userConfigReadError("policy", policyFile, error);
   }
-  return parsePolicyDocument(raw);
+  try {
+    return parsePolicyDocument(raw);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Invalid Codecut user policy ${displayPath(policyFile)}: ${message}. Repair it or rerun \`codecut setup --user --refresh-policy\`.`,
+    );
+  }
 }
 
 export function mergePolicies(

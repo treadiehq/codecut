@@ -5,6 +5,7 @@ import {
   discoverDirectives,
   parseDirectives,
 } from "../src/core/discovery.js";
+import { compilePolicy } from "../src/core/compiler.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -144,5 +145,51 @@ describe("directive discovery", () => {
     expect(
       directives.some((item) => item.text === "Run tests locally"),
     ).toBe(true);
+  });
+
+  it("does not treat a blockquote before a thematic break as a heading", () => {
+    const directives = parseDirectives(
+      [
+        "> **Important**: When deploying to production",
+        "---",
+        "- All unit tests must pass",
+      ].join("\n"),
+      { path: "CLAUDE.md", scope: "project", conditional: false },
+    );
+
+    expect(
+      directives.find((item) => item.text.includes("unit tests"))?.source
+        .conditional,
+    ).toBe(false);
+  });
+
+  it("keeps discovered rules after blockquotes eligible for blocking", async () => {
+    const directory = await mkdtemp(
+      path.join(process.cwd(), ".codecut-discovery-blockquote-"),
+    );
+    temporaryDirectories.push(directory);
+    await writeFile(
+      path.join(directory, "CLAUDE.md"),
+      [
+        "# Project Rules",
+        "> **Important**: When deploying to production",
+        "---",
+        "- All unit tests must pass",
+      ].join("\n"),
+    );
+
+    const discovery = await discoverDirectives(directory);
+    const policy = compilePolicy({
+      directives: discovery.directives,
+      sources: discovery.sources,
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+    const rule = policy.rules.find(
+      (item) => item.type === "require-passing-tests",
+    );
+
+    expect(rule?.source.conditional).toBe(false);
+    expect(rule).toMatchObject({ mode: "block", confirmed: true });
   });
 });
