@@ -25,6 +25,18 @@ describe("Claude hook adapter", () => {
     });
   });
 
+  it("normalizes SessionStart (clear/compact) as a context reset", () => {
+    const event = normalizeClaudeEvent({
+      hook_event_name: "SessionStart",
+      session_id: "session-1",
+      cwd: "/tmp/project",
+      source: "clear",
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+
+    expect(event.stage).toBe("context-reset");
+  });
+
   it("returns a deny decision before a blocked tool call", () => {
     const event = normalizeClaudeEvent({
       hook_event_name: "PreToolUse",

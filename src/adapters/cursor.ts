@@ -46,7 +46,7 @@ export function formatCursorOutput(
       : { additional_context: message };
   }
 
-  if (event.stage === "post-tool-failure") {
+  if (event.stage === "post-tool-failure" || event.stage === "context-reset") {
     return {};
   }
 

@@ -59,6 +59,7 @@ describe("user-level hook install", () => {
       "postToolUseFailure",
       "afterAgentResponse",
       "stop",
+      "preCompact",
     ]);
     for (const definitions of Object.values(settings.hooks)) {
       expect(definitions).toHaveLength(1);

@@ -5,6 +5,7 @@ import {
   extractEditedPaths,
 } from "./events.js";
 import { matchesAny } from "./patterns.js";
+import type { AddedCommentBlock } from "./git.js";
 import type {
   DiffStats,
   NormalizedHookEvent,
@@ -193,10 +194,48 @@ function evaluatePostTool(
   return violations;
 }
 
+function evaluateCommentQuality(
+  rule: Extract<PolicyRule, { type: "comment-quality" }>,
+  blocks: AddedCommentBlock[],
+): RuleViolation | undefined {
+  const matchingBlocks = blocks.filter((block) =>
+    matchesAny(block.path, rule.filePatterns),
+  );
+  const matches = matchingBlocks.flatMap((block) =>
+    block.comments.filter((comment) => matchesAny(comment, rule.bannedPatterns)),
+  );
+  const longBlocks =
+    rule.maxCommentLines === undefined
+      ? []
+      : matchingBlocks.filter(
+          (block) => block.comments.length > rule.maxCommentLines!,
+        );
+  if (matches.length === 0 && longBlocks.length === 0) {
+    return undefined;
+  }
+
+  const evidence = [
+    matches.length > 0
+      ? `${countLabel(matches.length, "new code comment")} mentions temporary agent context.`
+      : "",
+    longBlocks.length > 0 && rule.maxCommentLines !== undefined
+      ? `${countLabel(longBlocks.length, "new code comment")} runs longer than ${countLabel(rule.maxCommentLines, "line")}.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const recovery =
+    matches.length > 0
+      ? "Remove it or explain only a lasting code constraint. Do not mention prompts, instructions, tickets, or temporary files."
+      : `Run a subagent to review and de-slopify the comment, then shorten it to at most ${countLabel(rule.maxCommentLines ?? 1, "line")} or keep only a lasting code constraint.`;
+  return violation(rule, evidence, recovery);
+}
+
 function evaluateStop(
   policy: Policy,
   receipts: Receipt[],
   diffStats: DiffStats | undefined,
+  addedCommentBlocks: AddedCommentBlock[] = [],
 ): RuleViolation[] {
   const violations: RuleViolation[] = [];
   const edits = receipts.filter((receipt) => receipt.kind === "edit");
@@ -325,6 +364,14 @@ function evaluateStop(
       continue;
     }
 
+    if (rule.type === "comment-quality") {
+      const commentViolation = evaluateCommentQuality(rule, addedCommentBlocks);
+      if (commentViolation) {
+        violations.push(commentViolation);
+      }
+      continue;
+    }
+
     if (rule.type === "blast-radius" && diffStats) {
       const changedLines = diffStats.added + diffStats.deleted;
       const acknowledged = receipts.some(
@@ -412,12 +459,18 @@ export function evaluatePolicy(options: {
   event: NormalizedHookEvent;
   receipts: Receipt[];
   diffStats?: DiffStats;
+  addedCommentBlocks?: AddedCommentBlock[];
 }): PolicyDecision {
   const violations =
     options.event.stage === "pre-tool"
       ? evaluatePreTool(options.policy, options.event)
       : options.event.stage === "stop"
-        ? evaluateStop(options.policy, options.receipts, options.diffStats)
+        ? evaluateStop(
+            options.policy,
+            options.receipts,
+            options.diffStats,
+            options.addedCommentBlocks,
+          )
         : evaluatePostTool(options.policy, options.event, options.receipts);
 
   const outcome = violations.some((item) => item.severity === "block")

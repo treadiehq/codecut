@@ -11,7 +11,10 @@ const WINDOWS_RUNTIME_PATH = path.win32.join(
 export const CODEX_HOOK_COMMAND =
   `CODECUT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"; "$CODECUT_ROOT/${RUNTIME_PATH}" hook --agent codex`;
 const TOOL_MATCHER = "Bash|apply_patch|Edit|Write|mcp__.*";
-const EVENTS = ["PreToolUse", "PostToolUse", "Stop"] as const;
+// Codex mirrors Claude's SessionStart sources; compact fires after
+// compaction (clear included for parity, harmless when never emitted).
+const SESSION_START_MATCHER = "clear|compact";
+const EVENTS = ["PreToolUse", "PostToolUse", "Stop", "SessionStart"] as const;
 
 type CodexHookEvent = (typeof EVENTS)[number];
 type JsonObject = Record<string, unknown>;
@@ -56,7 +59,9 @@ function hookDefinition(
       },
     ],
   };
-  if (event !== "Stop") {
+  if (event === "SessionStart") {
+    definition.matcher = SESSION_START_MATCHER;
+  } else if (event !== "Stop") {
     definition.matcher = TOOL_MATCHER;
   }
   return definition;

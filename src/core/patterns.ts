@@ -46,6 +46,8 @@ export const DEFAULT_CODE_FILE_PATTERNS = [
   String.raw`\.(?:[cm]?[jt]sx?|py|rb|rs|go|java|kt|kts|swift|php|cs|cpp|cc|cxx|h|hpp|sql|sh|bash|zsh)$`,
 ];
 
+// Fingerprint of the pre-0.1.x defaults; parsePolicyDocument upgrades
+// policies that still carry exactly these patterns. Do not edit.
 export const LEGACY_COMMENT_CONTEXT_PATTERNS = [
   String.raw`\b(?:AGENTS|CLAUDE|GEMINI)\.md\b`,
   String.raw`\b(?:system\s+)?prompt\b`,
@@ -61,7 +63,10 @@ export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
   String.raw`\b(?:system|agent)\s+prompt\b`,
   String.raw`\bagent\s+instructions?\b`,
   String.raw`\bcodecut\s+directives?\b`,
-  String.raw`\b[A-Z][A-Z0-9]{1,9}-\d+\b`,
+  // Ticket keys (ABC-123). Case-sensitive: compiled with the default `i`
+  // flag this swallowed any word-digit token (SHA-256, UTF-8, version-1).
+  // Well-known standards/crypto prefixes are excluded even in uppercase.
+  String.raw`(?-i)\b(?!(?:SHA|UTF|AES|RSA|CRC|ISO|RFC|IEEE|CVE|TLS|HTTP|HMAC)-\d)[A-Z][A-Z0-9]{1,9}-\d+\b`,
   String.raw`(?:\.cursor/(?:plans|rules)|/tmp/|temporary\s+spec|ephemeral\s+spec)`,
   String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent|I\s+(?:added|changed|implemented))\b`,
 ];
@@ -136,7 +141,7 @@ export function debugArtifactPatternsForPath(
 }
 
 export const DEFAULT_TODO_PATTERNS = [
-  String.raw`\b(?:TODO|FIXME|HACK|XXX)\b`,
+  String.raw`(?-i)\b(?:TODO|FIXME|HACK|XXX)\b`,
 ];
 
 export const DEFAULT_TEST_FILE_PATTERNS = [
@@ -145,14 +150,30 @@ export const DEFAULT_TEST_FILE_PATTERNS = [
   String.raw`_test\.(?:go|py|rb|ts|js)$`,
 ];
 
+/**
+ * Marks a pattern as case-sensitive. Patterns match case-insensitively by
+ * default; uppercase-significant patterns (ticket keys, TODO markers) opt out
+ * with this prefix. The syntax mirrors the inline modifier of other regex
+ * engines but is handled here — JavaScript rejects `(?-i)` natively.
+ */
+const CASE_SENSITIVE_PREFIX = "(?-i)";
+
+export function compilePattern(pattern: string): RegExp | undefined {
+  const caseSensitive = pattern.startsWith(CASE_SENSITIVE_PREFIX);
+  const source = caseSensitive
+    ? pattern.slice(CASE_SENSITIVE_PREFIX.length)
+    : pattern;
+  try {
+    return new RegExp(source, caseSensitive ? "" : "i");
+  } catch {
+    return undefined;
+  }
+}
+
 export function matchesAny(value: string, patterns: string[]): boolean {
-  return patterns.some((pattern) => {
-    try {
-      return new RegExp(pattern, "i").test(value);
-    } catch {
-      return false;
-    }
-  });
+  return patterns.some(
+    (pattern) => compilePattern(pattern)?.test(value) ?? false,
+  );
 }
 
 export function countWarningLines(

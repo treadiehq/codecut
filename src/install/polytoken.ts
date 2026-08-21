@@ -10,6 +10,10 @@ const EVENTS = [
   "post_tool_use_failure",
   "post_model_turn",
   "stop",
+  // Context-reset signals: a cleared or compacted context no longer
+  // contains previously delivered warnings, so codecut re-arms them.
+  "post_clear",
+  "post_compaction",
 ] as const;
 
 type PolytokenHookEvent = (typeof EVENTS)[number];

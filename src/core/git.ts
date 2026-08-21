@@ -4,7 +4,14 @@ import { createReadStream } from "node:fs";
 import { lstat, readdir, readlink, realpath } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
+import { groupCommentBlocks, scanComments } from "./comments.js";
+import { parseUnifiedDiff } from "./diff.js";
 import type { DiffStats, Receipt } from "./schema.js";
+
+export type AddedCommentBlock = {
+  path: string;
+  comments: string[];
+};
 
 const execFileAsync = promisify(execFile);
 const FINGERPRINT_SKIPPED_DIRECTORIES = new Set([
@@ -365,6 +372,22 @@ export async function findGitRoot(cwd: string): Promise<string | undefined> {
   const output = await git(cwd, ["rev-parse", "--show-toplevel"]);
   const root = output?.trim();
   return root && root.length > 0 ? root : undefined;
+}
+
+export async function inspectAddedCommentBlocks(
+  cwd: string,
+): Promise<AddedCommentBlock[]> {
+  const diff = await git(cwd, ["diff", "HEAD", "--"]);
+  if (diff === undefined) {
+    return [];
+  }
+
+  return parseUnifiedDiff(diff).flatMap((file) =>
+    groupCommentBlocks(scanComments(file.addedLines)).map((block) => ({
+      path: file.path,
+      comments: block.map((comment) => comment.text),
+    })),
+  );
 }
 
 export async function inspectDiff(

@@ -244,6 +244,38 @@ describe("lint checks", () => {
     ).toEqual(agentTerms);
   });
 
+  it("flags ticket keys but not technical word-digit tokens", () => {
+    const lintComment = (comment: string) =>
+      runLint(
+        parseUnifiedDiff(
+          [
+            "diff --git a/src/x.ts b/src/x.ts",
+            "--- a/src/x.ts",
+            "+++ b/src/x.ts",
+            "@@ -1 +1,2 @@",
+            " const a = 1;",
+            `+// ${comment}`,
+            "",
+          ].join("\n"),
+        ),
+        defaultLintConfig(),
+      ).findings.filter((finding) => finding.check === "comment-quality");
+
+    // Ticket keys are flagged.
+    expect(lintComment("See ABC-123 for details")).toHaveLength(1);
+    expect(lintComment("Workaround for JIRA2-42")).toHaveLength(1);
+
+    // Lowercase word-digit tokens are not ticket keys.
+    expect(lintComment("uses the version-1 token format")).toEqual([]);
+    expect(lintComment("hashes per spec-1.0 rules")).toEqual([]);
+    // Neither are well-known uppercase standards/crypto tokens.
+    expect(lintComment("derived via SHA-256 over the PSK")).toEqual([]);
+    expect(lintComment("JSON message body (UTF-8)")).toEqual([]);
+    expect(lintComment("encrypts with AES-256 when available")).toEqual([]);
+    expect(lintComment("timestamps follow ISO-8601")).toEqual([]);
+    expect(lintComment("defined in RFC-4648")).toEqual([]);
+  });
+
   it("flags task markers case-sensitively", () => {
     const result = runLint(files, defaultLintConfig());
     const todoFindings = result.findings.filter(

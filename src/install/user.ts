@@ -111,6 +111,7 @@ export async function hasProjectHooks(
         "post-tool": "PostToolUse",
         "post-tool-failure": "PostToolUseFailure",
         stop: "Stop",
+        "context-reset": "SessionStart",
       },
       cursor: {
         "pre-tool": "preToolUse",
@@ -118,11 +119,13 @@ export async function hasProjectHooks(
         "post-tool-failure": "postToolUseFailure",
         "agent-response": "afterAgentResponse",
         stop: "stop",
+        "context-reset": "preCompact",
       },
       codex: {
         "pre-tool": "PreToolUse",
         "post-tool": "PostToolUse",
         stop: "Stop",
+        "context-reset": "SessionStart",
       },
       polytoken: {
         "pre-tool": "pre_tool_use",
@@ -130,6 +133,9 @@ export async function hasProjectHooks(
         "post-tool-failure": "post_tool_use_failure",
         "agent-response": "post_model_turn",
         stop: "stop",
+        // post_clear and post_compaction are installed together; either
+        // one registered means the project handles context resets.
+        "context-reset": "post_clear",
       },
     };
     if (agent === "polytoken") {

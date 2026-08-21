@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { compilePattern } from "./patterns.js";
 
 export const agentNameSchema = z.enum([
   "claude",
@@ -33,14 +34,9 @@ const ruleBase = {
 };
 
 const regexPatternSchema = z.string().min(1).refine(
-  (value) => {
-    try {
-      new RegExp(value);
-      return true;
-    } catch {
-      return false;
-    }
-  },
+  // compilePattern understands the `(?-i)` case-sensitivity prefix that a
+  // bare `new RegExp` would reject.
+  (value) => compilePattern(value) !== undefined,
   { message: "must be a valid regular expression" },
 );
 
@@ -125,6 +121,9 @@ export const hookStageSchema = z.enum([
   "post-tool-failure",
   "agent-response",
   "stop",
+  // The agent's conversation context was cleared or compacted: prior
+  // in-context deliveries (e.g. warnings) may no longer be visible to it.
+  "context-reset",
 ]);
 export type HookStage = z.infer<typeof hookStageSchema>;
 
@@ -158,6 +157,7 @@ export const receiptSchema = z.object({
     "command",
     "decision",
     "acknowledgement",
+    "context-reset",
   ]),
   path: z.string().optional(),
   changedLines: z.number().int().nonnegative().optional(),

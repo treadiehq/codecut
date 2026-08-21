@@ -78,7 +78,7 @@ describe("native Codex integration", () => {
     const first = mergeCodexHooks(existing);
     const second = mergeCodexHooks(first.settings);
 
-    expect(first.changedEvents).toHaveLength(3);
+    expect(first.changedEvents).toHaveLength(4);
     expect(second.changedEvents).toHaveLength(0);
     const preToolHooks = (
       first.settings.hooks as Record<string, Array<Record<string, unknown>>>

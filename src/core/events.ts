@@ -356,6 +356,17 @@ function isEditTool(toolName: string | undefined): boolean {
   );
 }
 
+/** Record that the agent's context was cleared or compacted. */
+export function contextResetReceipt(event: NormalizedHookEvent): Receipt {
+  return {
+    version: 1,
+    id: randomUUID(),
+    timestamp: event.occurredAt,
+    sessionId: event.sessionId,
+    kind: "context-reset",
+  };
+}
+
 export function deriveReceipts(
   policy: Policy,
   event: NormalizedHookEvent,

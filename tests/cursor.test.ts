@@ -142,7 +142,7 @@ describe("native Cursor integration", () => {
     const first = mergeCursorHooks(existing);
     const second = mergeCursorHooks(first.settings);
 
-    expect(first.changedEvents).toHaveLength(5);
+    expect(first.changedEvents).toHaveLength(6);
     expect(second.changedEvents).toHaveLength(0);
     const preToolHooks = (
       first.settings.hooks as Record<string, Array<Record<string, unknown>>>
