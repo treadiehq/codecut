@@ -78,9 +78,8 @@ describe("native Polytoken integration", () => {
       },
     );
 
-    expect(formatPolytokenOutput(event, warning)).toMatchObject({
+    expect(formatPolytokenOutput(event, warning)).toEqual({
       outcome: "allow",
-      reason: expect.stringContaining("Use local machines for testing"),
     });
   });
 
@@ -120,6 +119,19 @@ describe("native Polytoken integration", () => {
     expect(polytokenProceedOutput("post_compaction")).toEqual({
       outcome: "allow",
     });
+  });
+
+  it("keeps fail-open output free of unsupported advisory fields", () => {
+    for (const eventName of [
+      "pre_tool_use",
+      "post_tool_use",
+      "post_tool_use_failure",
+      "post_model_turn",
+      "post_clear",
+      "post_compaction",
+    ]) {
+      expect(polytokenProceedOutput(eventName)).not.toHaveProperty("reason");
+    }
   });
 
   it("normalizes context-reset events and always allows them", () => {
