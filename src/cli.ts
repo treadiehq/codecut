@@ -65,7 +65,9 @@ async function setupUser(
     const hooks = await installUserHooks(
       hookAgent as Exclude<AgentName, "unknown">,
     );
-    const health = await inspectHookSettings(os.homedir(), hookAgent);
+    const health = await inspectHookSettings(os.homedir(), hookAgent, {
+      userLevel: true,
+    });
     if (health.missingHookEvents.length > 0) {
       throw new Error(
         `User-level ${hookAgent} hooks are incomplete after install; missing: ${health.missingHookEvents.join(", ")}. Check ${displayPath(hooks.settingsPath)}.`,

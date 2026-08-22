@@ -99,12 +99,13 @@ export async function validatePolytokenSettings(
 
 export async function installPolytokenHooks(
   rootDirectory: string,
-  options: { command?: string } = {},
+  options: { command?: string; settingsPath?: string } = {},
 ): Promise<{
   settingsPath: string;
   addedEvents: PolytokenHookEvent[];
 }> {
-  const settingsPath = path.join(rootDirectory, ".polytoken", "hooks.json");
+  const settingsPath =
+    options.settingsPath ?? path.join(rootDirectory, ".polytoken", "hooks.json");
   let merged;
   try {
     merged = mergePolytokenHooks(
