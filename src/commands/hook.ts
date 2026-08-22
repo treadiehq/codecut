@@ -116,10 +116,10 @@ function hookErrorOutput(
   }
 
   if (agent === "polytoken") {
-    return {
-      ...polytokenProceedOutput(nativeEventName),
-      reason: `${detail} This non-stop action was allowed.`,
-    };
+    // Polytoken rejects fields that are not valid for the event's fail-open
+    // outcome; in particular, `reason` is not valid with `allow` or
+    // `acknowledged`. Keep the fallback strictly protocol-shaped.
+    return polytokenProceedOutput(nativeEventName);
   }
   return {
     systemMessage: `${detail} This non-stop action was allowed.`,

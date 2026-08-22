@@ -159,7 +159,9 @@ export function formatPolytokenOutput(
       return { outcome: "deny", reason: formatViolationMessage(decision) };
     }
     if (decision.outcome === "warn") {
-      return { outcome: "allow", reason: formatViolationMessage(decision) };
+      // Polytoken's pre_tool_use `allow` outcome does not accept `reason`.
+      // Advisory text can only accompany a valid deny/continue response.
+      return { outcome: "allow" };
     }
     return { outcome: "allow" };
   }
