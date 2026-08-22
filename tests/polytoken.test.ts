@@ -4,11 +4,12 @@ import {
   normalizePolytokenEvent,
   polytokenProceedOutput,
 } from "../src/adapters/polytoken.js";
-import type { PolicyDecision } from "../src/core/schema.js";
+import type { PolicyDecision, Receipt } from "../src/core/schema.js";
 import {
   mergePolytokenHooks,
   POLYTOKEN_HOOK_COMMAND,
 } from "../src/install/polytoken.js";
+import { warningAlreadyDelivered } from "../src/commands/hook.js";
 
 const blocked: PolicyDecision = {
   outcome: "block",
@@ -114,6 +115,25 @@ describe("native Polytoken integration", () => {
     expect(polytokenProceedOutput("post_tool_use")).toEqual({
       outcome: "acknowledged",
     });
+    // post_clear / post_compaction accept only `allow`.
+    expect(polytokenProceedOutput("post_clear")).toEqual({ outcome: "allow" });
+    expect(polytokenProceedOutput("post_compaction")).toEqual({
+      outcome: "allow",
+    });
+  });
+
+  it("normalizes context-reset events and always allows them", () => {
+    for (const eventName of ["post_clear", "post_compaction"]) {
+      const event = normalizePolytokenEvent(
+        { event: eventName, session_id: "session-1", cwd: "/tmp/project" },
+        new Date("2026-07-29T12:00:00.000Z"),
+        {},
+      );
+      expect(event.stage).toBe("context-reset");
+      expect(formatPolytokenOutput(event, warning)).toEqual({
+        outcome: "allow",
+      });
+    }
   });
 
   it("merges project hooks without replacing unrelated configuration", () => {
@@ -128,9 +148,9 @@ describe("native Polytoken integration", () => {
     const first = mergePolytokenHooks(existing);
     const second = mergePolytokenHooks(first.settings);
 
-    expect(first.changedEvents).toHaveLength(5);
+    expect(first.changedEvents).toHaveLength(7);
     expect(second.changedEvents).toHaveLength(0);
-    expect(first.settings).toHaveLength(6);
+    expect(first.settings).toHaveLength(8);
     expect(first.settings[0]).toEqual(existing[0]);
     expect(
       (
@@ -139,5 +159,67 @@ describe("native Polytoken integration", () => {
         }
       ).handler.bash,
     ).toBe(POLYTOKEN_HOOK_COMMAND);
+  });
+});
+
+describe("warning delivery dedup", () => {
+  const warnReceipt = (timestamp: string, ruleIds: string[]): Receipt => ({
+    version: 1,
+    id: "receipt-1",
+    timestamp,
+    sessionId: "session-1",
+    kind: "decision",
+    outcome: "warn",
+    ruleIds,
+  });
+
+  it("suppresses an identical warning for as long as its context survives", () => {
+    // No timer: a warning delivered hours ago still suppresses until a
+    // context reset says the agent lost it.
+    expect(
+      warningAlreadyDelivered(
+        [warnReceipt("2026-07-29T01:00:00.000Z", ["comment-quality-1"])],
+        ["comment-quality-1"],
+      ),
+    ).toBe(true);
+  });
+
+  it("does not suppress warnings for a different rule set", () => {
+    expect(
+      warningAlreadyDelivered(
+        [warnReceipt("2026-07-29T12:00:00.000Z", ["other-rule"])],
+        ["comment-quality-1"],
+      ),
+    ).toBe(false);
+  });
+
+  it("re-warns after a context reset", () => {
+    const contextReset = (timestamp: string): Receipt => ({
+      version: 1,
+      id: "receipt-reset",
+      timestamp,
+      sessionId: "session-1",
+      kind: "context-reset",
+    });
+    const warned = warnReceipt("2026-07-29T11:50:00.000Z", [
+      "comment-quality-1",
+    ]);
+
+    // A clear/compaction after the warning discards it from the agent's
+    // context, so it no longer suppresses.
+    expect(
+      warningAlreadyDelivered(
+        [warned, contextReset("2026-07-29T11:55:00.000Z")],
+        ["comment-quality-1"],
+      ),
+    ).toBe(false);
+
+    // A reset before the warning leaves the delivered warning in context.
+    expect(
+      warningAlreadyDelivered(
+        [contextReset("2026-07-29T11:45:00.000Z"), warned],
+        ["comment-quality-1"],
+      ),
+    ).toBe(true);
   });
 });

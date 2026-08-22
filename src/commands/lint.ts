@@ -174,16 +174,6 @@ export async function resolveLintConfig(
   return config;
 }
 
-function matchesAnyCaseSensitive(value: string, patterns: string[]): boolean {
-  return patterns.some((pattern) => {
-    try {
-      return new RegExp(pattern).test(value);
-    } catch {
-      return false;
-    }
-  });
-}
-
 function hashCommentMode(language: SourceLanguage): HashCommentMode {
   if (language === "python" || language === "ruby") {
     return "anywhere";
@@ -256,7 +246,7 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
         }
         if (
           config.checks.has("todo-comments") &&
-          matchesAnyCaseSensitive(comment.text, config.todoPatterns)
+          matchesAny(comment.text, config.todoPatterns)
         ) {
           findings.push({
             check: "todo-comments",

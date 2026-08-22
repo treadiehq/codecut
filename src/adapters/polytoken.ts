@@ -37,6 +37,11 @@ function stageForEvent(eventName: string): NormalizedHookEvent["stage"] {
       return "agent-response";
     case "stop":
       return "stop";
+    // Both discard conversation context the agent was relying on; codecut
+    // treats them alike (e.g. re-arming already-delivered warnings).
+    case "post_clear":
+    case "post_compaction":
+      return "context-reset";
     default:
       throw new Error(`Unsupported Polytoken hook event "${eventName}".`);
   }
@@ -136,6 +141,10 @@ export function polytokenProceedOutput(eventName?: string): JsonRecord {
       return { outcome: "allow" };
     case "stop":
       return { outcome: "stop" };
+    // post_clear and post_compaction accept only `allow`.
+    case "post_clear":
+    case "post_compaction":
+      return { outcome: "allow" };
     default:
       return { outcome: "acknowledged" };
   }
@@ -160,6 +169,11 @@ export function formatPolytokenOutput(
       (decision.outcome === "warn" && event.stopHookActive)
       ? { outcome: "stop" }
       : { outcome: "continue", reason: formatViolationMessage(decision) };
+  }
+
+  if (event.stage === "context-reset") {
+    // post_clear / post_compaction accept only `allow`.
+    return { outcome: "allow" };
   }
 
   return { outcome: "acknowledged" };

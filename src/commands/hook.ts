@@ -19,12 +19,14 @@ import {
 } from "../adapters/polytoken.js";
 import { evaluatePolicy } from "../core/engine.js";
 import {
+  contextResetReceipt,
   decisionReceipt,
   deriveAcknowledgementReceipts,
   deriveReceipts,
 } from "../core/events.js";
 import {
   findGitRoot,
+  inspectAddedCommentBlocks,
   inspectDiff,
   workingTreeFingerprint,
 } from "../core/git.js";
@@ -43,6 +45,34 @@ import {
 } from "../core/user.js";
 import { appendReceipts, readSessionReceipts } from "../core/store.js";
 import { hasProjectHooks } from "../install/user.js";
+
+/**
+ * Has an identical warning (same rule set) already been delivered — and is it
+ * still in the agent's context? A warning stops counting once the context is
+ * cleared or compacted (context-reset receipt, recorded from every supported
+ * agent's clear/compaction hook events): sessions outlive their context (a
+ * clear keeps the session ID), and a permanently suppressed warning never
+ * reaches the post-clear agent.
+ */
+export function warningAlreadyDelivered(
+  receipts: Receipt[],
+  ruleIds: string[],
+): boolean {
+  const sortedRuleIds = JSON.stringify([...ruleIds].sort());
+  const lastContextReset = receipts
+    .filter((receipt) => receipt.kind === "context-reset")
+    .map((receipt) => receipt.timestamp)
+    .sort()
+    .at(-1);
+  return receipts.some(
+    (receipt) =>
+      receipt.kind === "decision" &&
+      receipt.outcome === "warn" &&
+      JSON.stringify([...(receipt.ruleIds ?? [])].sort()) === sortedRuleIds &&
+      (lastContextReset === undefined ||
+        receipt.timestamp > lastContextReset),
+  );
+}
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -212,6 +242,15 @@ export async function runHook(
       eventsFile = userEventsPath(diffRoot);
     }
 
+    if (event.stage === "context-reset") {
+      // The agent's context was cleared or compacted: record it so
+      // suppressed warnings re-arm (see warningAlreadyDelivered), then
+      // acknowledge — these events accept no other outcome.
+      await appendReceipts(eventsFile, [contextResetReceipt(event)]);
+      proceed();
+      return;
+    }
+
     let receipts = await readSessionReceipts(eventsFile, event.sessionId);
     const newReceipts = deriveReceipts(policy, event);
     if (
@@ -247,6 +286,8 @@ export async function runHook(
       event.stage === "stop" || event.stage === "agent-response"
         ? await inspectDiff(diffRoot, receipts)
         : undefined;
+    const addedCommentBlocks =
+      event.stage === "stop" ? await inspectAddedCommentBlocks(diffRoot) : [];
     const acknowledgements = deriveAcknowledgementReceipts(
       policy,
       event,
@@ -268,18 +309,13 @@ export async function runHook(
       event,
       receipts,
       diffStats,
+      addedCommentBlocks,
     });
-    const decisionRuleIds = decision.violations
-      .map((violation) => violation.ruleId)
-      .sort();
     const warningAlreadySent =
       decision.outcome === "warn" &&
-      receipts.some(
-        (receipt) =>
-          receipt.kind === "decision" &&
-          receipt.outcome === "warn" &&
-          JSON.stringify([...(receipt.ruleIds ?? [])].sort()) ===
-            JSON.stringify(decisionRuleIds),
+      warningAlreadyDelivered(
+        receipts,
+        decision.violations.map((violation) => violation.ruleId),
       );
     await appendReceipts(eventsFile, [decisionReceipt(event, decision)]);
 

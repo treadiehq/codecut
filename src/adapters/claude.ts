@@ -41,6 +41,16 @@ function stageForEvent(eventName: string): NormalizedHookEvent["stage"] {
       return "agent-response";
     case "stop":
       return "stop";
+    // Claude/Codex fire SessionStart with source clear|compact after a
+    // context clear or compaction (codecut installs that matcher); Cursor
+    // signals compaction via preCompact. All discard delivered context.
+    case "sessionstart":
+    case "session-start":
+    case "precompact":
+    case "pre-compact":
+    case "postcompact":
+    case "post-compact":
+      return "context-reset";
     default:
       throw new Error(`Unsupported hook event "${eventName}".`);
   }
@@ -210,7 +220,7 @@ export function formatClaudeOutput(
     };
   }
 
-  if (event.stage === "agent-response") {
+  if (event.stage === "agent-response" || event.stage === "context-reset") {
     return {};
   }
 

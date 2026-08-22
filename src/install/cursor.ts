@@ -12,6 +12,8 @@ const EVENTS = [
   "postToolUseFailure",
   "afterAgentResponse",
   "stop",
+  // Cursor's only context-discard signal; there is no post-clear event.
+  "preCompact",
 ] as const;
 
 type CursorHookEvent = (typeof EVENTS)[number];
@@ -44,7 +46,7 @@ function hookDefinition(event: CursorHookEvent, command: string): JsonObject {
   };
   if (event === "stop") {
     definition.loop_limit = 4;
-  } else if (event !== "afterAgentResponse") {
+  } else if (event !== "afterAgentResponse" && event !== "preCompact") {
     definition.matcher = TOOL_MATCHER;
   }
   return definition;

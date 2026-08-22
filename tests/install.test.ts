@@ -70,7 +70,7 @@ describe("Claude hook installation", () => {
       hooks: Record<string, unknown[]>;
     };
 
-    expect(first.addedEvents).toHaveLength(4);
+    expect(first.addedEvents).toHaveLength(5);
     expect(second.addedEvents).toHaveLength(0);
     expect(settings.permissions.allow).toEqual(["Read"]);
     expect(settings.hooks.PreToolUse).toHaveLength(2);

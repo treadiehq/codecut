@@ -1179,6 +1179,39 @@ describe("starter policy enforcement", () => {
     ]);
   });
 
+  it("flags long comments during stop evaluation", () => {
+    const limitedPolicy = compilePolicy({
+      directives: [
+        {
+          text: "Always run a subagent to review and de-slopify code comments longer than three lines",
+          source: { path: "AGENTS.md", line: 1, scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "polytoken",
+      acceptBlockingRules: false,
+    });
+
+    const decision = evaluatePolicy({
+      policy: limitedPolicy,
+      event: hookEvent("stop"),
+      receipts: [],
+      addedCommentBlocks: [
+        {
+          path: "src/example.ts",
+          comments: ["one", "two", "three", "four"],
+        },
+      ],
+    });
+
+    expect(decision.outcome).toBe("warn");
+    expect(decision.violations[0]?.evidence).toContain(
+      "runs longer than 3 lines",
+    );
+    expect(decision.violations[0]?.recovery).toContain("subagent");
+    expect(decision.violations[0]?.recovery).toContain("de-slopify");
+  });
+
   it("allows durable comments and ignores documentation files", () => {
     const activePolicy = policy();
     const durable = hookEvent("post-tool", {

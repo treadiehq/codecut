@@ -6,12 +6,16 @@ const RUNTIME_PATH = RUNTIME_RELATIVE_PATH.split(path.sep).join("/");
 const HOOK_COMMAND =
   `CODECUT_ROOT="\${CLAUDE_PROJECT_DIR:-$PWD}"; "$CODECUT_ROOT/${RUNTIME_PATH}" hook --agent claude`;
 const TOOL_MATCHER = "Bash|Edit|Write|MultiEdit|NotebookEdit|apply_patch|mcp__.*";
+// Only these SessionStart sources discard the agent's context; startup,
+// resume, and fork keep (or freshly scope) it.
+const SESSION_START_MATCHER = "clear|compact";
 
 type HookEventName =
   | "PreToolUse"
   | "PostToolUse"
   | "PostToolUseFailure"
-  | "Stop";
+  | "Stop"
+  | "SessionStart";
 
 type JsonObject = Record<string, unknown>;
 
@@ -29,7 +33,9 @@ function hookDefinition(event: HookEventName, command: string): JsonObject {
       },
     ],
   };
-  if (event !== "Stop") {
+  if (event === "SessionStart") {
+    definition.matcher = SESSION_START_MATCHER;
+  } else if (event !== "Stop") {
     definition.matcher = TOOL_MATCHER;
   }
   return definition;
@@ -113,6 +119,7 @@ export async function installClaudeHooks(
     "PostToolUse",
     "PostToolUseFailure",
     "Stop",
+    "SessionStart",
   ];
   const addedEvents: HookEventName[] = [];
 
