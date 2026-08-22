@@ -82,7 +82,7 @@ describe("user-level hook install", () => {
         path.join(xdgConfigHome, "polytoken", "hooks.json"),
       );
       expect(JSON.parse(await readFile(result.settingsPath, "utf8"))).toHaveLength(
-        5,
+        7,
       );
     } finally {
       if (previous === undefined) {
