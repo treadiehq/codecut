@@ -93,9 +93,8 @@ try {
     input: { command: "ssh runner npm test" },
   });
   assert(
-    warning.outcome === "allow" &&
-      warning.reason?.includes("Use local machines for testing"),
-    "Polytoken remote test warning was not shown",
+    warning.outcome === "allow" && !("reason" in warning),
+    "Polytoken advisory remote test was not allowed cleanly",
   );
 
   run(
@@ -161,7 +160,7 @@ try {
     [
       "PASS native Polytoken one-command setup",
       "PASS native Polytoken hook configuration",
-      "PASS Polytoken pre-tool warning and denial",
+      "PASS Polytoken pre-tool advisory allowance and denial",
       "PASS Polytoken stop recovery and verified completion",
     ].join("\n") + "\n",
   );
