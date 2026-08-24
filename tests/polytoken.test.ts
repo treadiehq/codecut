@@ -10,6 +10,7 @@ import {
   POLYTOKEN_HOOK_COMMAND,
 } from "../src/install/polytoken.js";
 import { warningAlreadyDelivered } from "../src/commands/hook.js";
+import { contextResetReceipt } from "../src/core/events.js";
 
 const blocked: PolicyDecision = {
   outcome: "block",
@@ -233,5 +234,29 @@ describe("warning delivery dedup", () => {
         ["comment-quality-1"],
       ),
     ).toBe(true);
+  });
+
+  it("uses processing time when an agent sends a stale reset timestamp", () => {
+    const processedAt = new Date("2026-07-29T12:00:02.000Z");
+    const event = normalizePolytokenEvent(
+      {
+        event: "post_clear",
+        session_id: "session-1",
+        cwd: "/tmp/project",
+        timestamp: "2026-07-29T12:00:00.500Z",
+      },
+      processedAt,
+      {},
+    );
+    const reset = contextResetReceipt(event, processedAt);
+    const warned = warnReceipt("2026-07-29T12:00:01.000Z", [
+      "comment-quality-1",
+    ]);
+
+    expect(event.occurredAt).toBe("2026-07-29T12:00:00.500Z");
+    expect(reset.timestamp).toBe("2026-07-29T12:00:02.000Z");
+    expect(
+      warningAlreadyDelivered([warned, reset], ["comment-quality-1"]),
+    ).toBe(false);
   });
 });

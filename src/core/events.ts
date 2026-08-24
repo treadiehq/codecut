@@ -357,11 +357,14 @@ function isEditTool(toolName: string | undefined): boolean {
 }
 
 /** Record that the agent's context was cleared or compacted. */
-export function contextResetReceipt(event: NormalizedHookEvent): Receipt {
+export function contextResetReceipt(
+  event: NormalizedHookEvent,
+  now = new Date(),
+): Receipt {
   return {
     version: 1,
     id: randomUUID(),
-    timestamp: event.occurredAt,
+    timestamp: now.toISOString(),
     sessionId: event.sessionId,
     kind: "context-reset",
   };
@@ -526,6 +529,7 @@ export function deriveAcknowledgementReceipts(
   event: NormalizedHookEvent,
   receipts: Receipt[],
   diffStats: DiffStats | undefined,
+  now = new Date(),
 ): Receipt[] {
   const message = event.lastAssistantMessage;
   if (!message || !diffStats || !isBlastRadiusJustification(message)) {
@@ -562,6 +566,7 @@ export function deriveAcknowledgementReceipts(
     (receipt) =>
       receipt.kind === "acknowledgement" &&
       receipt.timestamp >= pendingDecision.timestamp &&
+      receiptMatchesDiffState(receipt, diffStats) &&
       receipt.diffFiles === diffStats.files &&
       receipt.diffChangedLines === changedLines &&
       receipt.ruleIds?.some((ruleId) => blastRuleIds.has(ruleId)),
@@ -574,9 +579,12 @@ export function deriveAcknowledgementReceipts(
     {
       version: 1,
       id: randomUUID(),
-      timestamp: event.occurredAt,
+      timestamp: now.toISOString(),
       sessionId: event.sessionId,
       kind: "acknowledgement",
+      ...(diffStats.fingerprint
+        ? { stateFingerprint: diffStats.fingerprint }
+        : {}),
       ruleIds: pendingDecision.ruleIds?.filter((ruleId) =>
         blastRuleIds.has(ruleId),
       ),
@@ -586,14 +594,25 @@ export function deriveAcknowledgementReceipts(
   ];
 }
 
+export function receiptMatchesDiffState(
+  receipt: Receipt,
+  diffStats: DiffStats,
+): boolean {
+  return (
+    diffStats.fingerprint === undefined ||
+    receipt.stateFingerprint === diffStats.fingerprint
+  );
+}
+
 export function decisionReceipt(
   event: NormalizedHookEvent,
   decision: PolicyDecision,
+  now = new Date(),
 ): Receipt {
   return {
     version: 1,
     id: randomUUID(),
-    timestamp: new Date().toISOString(),
+    timestamp: now.toISOString(),
     sessionId: event.sessionId,
     kind: "decision",
     outcome: decision.outcome,

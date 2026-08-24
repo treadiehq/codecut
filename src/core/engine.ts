@@ -3,6 +3,7 @@ import {
   extractAddedComments,
   extractCommand,
   extractEditedPaths,
+  receiptMatchesDiffState,
 } from "./events.js";
 import { matchesAny } from "./patterns.js";
 import type { AddedCommentBlock } from "./git.js";
@@ -378,6 +379,7 @@ function evaluateStop(
         (receipt) =>
           receipt.kind === "acknowledgement" &&
           after(receipt, latestEdit) &&
+          receiptMatchesDiffState(receipt, diffStats) &&
           receipt.ruleIds?.includes(rule.id) &&
           receipt.diffFiles === diffStats.files &&
           receipt.diffChangedLines === changedLines,

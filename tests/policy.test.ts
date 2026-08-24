@@ -692,10 +692,14 @@ describe("starter policy enforcement", () => {
       added: blastRule.maxChangedLines + 1,
       deleted: 0,
       complete: true,
+      fingerprint: "sha256:1111111111111111",
     };
     const receipts: Receipt[] = [
       edit(),
-      verification(),
+      verification({
+        stateBeforeFingerprint: diffStats.fingerprint,
+        stateFingerprint: diffStats.fingerprint,
+      }),
       {
         version: 1,
         id: "blast-decision",
@@ -715,6 +719,7 @@ describe("starter policy enforcement", () => {
       }),
       receipts,
       diffStats,
+      new Date("2026-01-01T00:00:04.000Z"),
     );
 
     expect(acknowledgement).toHaveLength(1);
@@ -723,6 +728,7 @@ describe("starter policy enforcement", () => {
       ruleIds: [blastRule.id],
       diffFiles: diffStats.files,
       diffChangedLines: diffStats.added,
+      stateFingerprint: diffStats.fingerprint,
     });
     const decision = evaluatePolicy({
       policy: activePolicy,
@@ -733,6 +739,21 @@ describe("starter policy enforcement", () => {
       diffStats,
     });
     expect(decision.outcome).toBe("allow");
+
+    const changedState = evaluatePolicy({
+      policy: activePolicy,
+      event: hookEvent("stop", {
+        occurredAt: "2026-01-01T00:00:06.000Z",
+      }),
+      receipts: [...receipts, ...acknowledgement],
+      diffStats: {
+        ...diffStats,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+    expect(changedState.violations.map((violation) => violation.ruleId)).toContain(
+      blastRule.id,
+    );
   });
 
   it("requires verification newer than the latest edit", () => {
