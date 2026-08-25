@@ -377,17 +377,41 @@ export async function findGitRoot(cwd: string): Promise<string | undefined> {
 export async function inspectAddedCommentBlocks(
   cwd: string,
 ): Promise<AddedCommentBlock[]> {
-  const diff = await git(cwd, ["diff", "HEAD", "--"]);
+  const projectRoot = await realpath(cwd);
+  const gitRoot = (
+    await git(projectRoot, ["rev-parse", "--show-toplevel"])
+  )?.trim();
+  if (!gitRoot) {
+    return [];
+  }
+  const prefix = path
+    .relative(gitRoot, projectRoot)
+    .split(path.sep)
+    .join("/");
+  const diff = await git(gitRoot, [
+    "diff",
+    "HEAD",
+    "--",
+    prefix || ".",
+  ]);
   if (diff === undefined) {
     return [];
   }
 
-  return parseUnifiedDiff(diff).flatMap((file) =>
-    groupCommentBlocks(scanComments(file.addedLines)).map((block) => ({
-      path: file.path,
+  return parseUnifiedDiff(diff).flatMap((file) => {
+    const relativePath = projectRelativePath(
+      gitRoot,
+      projectRoot,
+      file.path,
+    );
+    if (!relativePath) {
+      return [];
+    }
+    return groupCommentBlocks(scanComments(file.addedLines)).map((block) => ({
+      path: relativePath,
       comments: block.map((comment) => comment.text),
-    })),
-  );
+    }));
+  });
 }
 
 export async function inspectDiff(
@@ -397,41 +421,69 @@ export async function inspectDiff(
   const state = await workingTreeState(cwd);
   const parsed = parseNumstat("");
   if (state.git) {
-    const head = (await git(cwd, ["rev-parse", "--verify", "HEAD"]))?.trim();
-    if (head) {
-      const againstHead = await git(cwd, [
-        "diff",
-        "--numstat",
-        "--no-renames",
-        "HEAD",
-        "--",
-      ]);
-      if (againstHead === undefined) {
-        parsed.complete = false;
-      } else {
-        Object.assign(parsed, parseNumstat(againstHead));
-      }
-      const untracked = await listGitProjectFiles(cwd, ["--others"]);
-      if (untracked === undefined) {
-        parsed.complete = false;
-      } else {
-        const counted = await countCurrentFileLines(cwd, untracked);
-        for (const filePath of counted.paths) {
-          parsed.paths.add(filePath);
-        }
-        parsed.added += counted.added;
-        parsed.complete &&= counted.complete;
-      }
+    const projectRoot = await realpath(cwd);
+    const gitRoot = (
+      await git(projectRoot, ["rev-parse", "--show-toplevel"])
+    )?.trim();
+    if (!gitRoot) {
+      parsed.complete = false;
     } else {
-      const initialFiles = await listGitProjectFiles(cwd, [
-        "--cached",
-        "--others",
-      ]);
-      if (initialFiles === undefined) {
-        parsed.complete = false;
+      const prefix = path
+        .relative(gitRoot, projectRoot)
+        .split(path.sep)
+        .join("/");
+      const head = (
+        await git(gitRoot, ["rev-parse", "--verify", "HEAD"])
+      )?.trim();
+      if (head) {
+        const againstHead = await git(gitRoot, [
+          "diff",
+          "--numstat",
+          "--no-renames",
+          "HEAD",
+          "--",
+          prefix || ".",
+        ]);
+        if (againstHead === undefined) {
+          parsed.complete = false;
+        } else {
+          const currentDiff = parseNumstat(againstHead);
+          for (const filePath of currentDiff.paths) {
+            const relativePath = projectRelativePath(
+              gitRoot,
+              projectRoot,
+              filePath,
+            );
+            if (relativePath) {
+              parsed.paths.add(relativePath);
+            }
+          }
+          parsed.added += currentDiff.added;
+          parsed.deleted += currentDiff.deleted;
+          parsed.complete &&= currentDiff.complete;
+        }
+        const untracked = await listGitProjectFiles(projectRoot, ["--others"]);
+        if (untracked === undefined) {
+          parsed.complete = false;
+        } else {
+          const counted = await countCurrentFileLines(projectRoot, untracked);
+          for (const filePath of counted.paths) {
+            parsed.paths.add(filePath);
+          }
+          parsed.added += counted.added;
+          parsed.complete &&= counted.complete;
+        }
       } else {
-        const counted = await countCurrentFileLines(cwd, initialFiles);
-        Object.assign(parsed, counted);
+        const initialFiles = await listGitProjectFiles(projectRoot, [
+          "--cached",
+          "--others",
+        ]);
+        if (initialFiles === undefined) {
+          parsed.complete = false;
+        } else {
+          const counted = await countCurrentFileLines(projectRoot, initialFiles);
+          Object.assign(parsed, counted);
+        }
       }
     }
   } else {

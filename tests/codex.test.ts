@@ -70,6 +70,7 @@ describe("native Codex integration", () => {
         PreToolUse: [
           {
             matcher: "WebSearch",
+            description: "Alternative to codecut hook --agent codex",
             hooks: [{ type: "command", command: "./existing.sh" }],
           },
         ],

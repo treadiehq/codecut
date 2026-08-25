@@ -4,7 +4,7 @@ import path from "node:path";
 export const POLYTOKEN_HOOK_COMMAND =
   'CODECUT_ROOT="${POLYTOKEN_PROJECT_DIR:-${POLYTOKEN_PROJECT_PATH:-$PWD}}"; CODECUT_BIN="$CODECUT_ROOT/.codecut/runtime/codecut"; [ -x "$CODECUT_BIN" ] || CODECUT_BIN="$CODECUT_BIN.exe"; "$CODECUT_BIN" hook --agent polytoken';
 
-const EVENTS = [
+export const POLYTOKEN_HOOK_EVENTS = [
   "pre_tool_use",
   "post_tool_use",
   "post_tool_use_failure",
@@ -16,7 +16,7 @@ const EVENTS = [
   "post_compaction",
 ] as const;
 
-type PolytokenHookEvent = (typeof EVENTS)[number];
+type PolytokenHookEvent = (typeof POLYTOKEN_HOOK_EVENTS)[number];
 type JsonObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is JsonObject {
@@ -28,9 +28,13 @@ function includesCodecutHook(value: unknown): boolean {
     return false;
   }
   const name = typeof value.name === "string" ? value.name : "";
+  const handler = isObject(value.handler) ? value.handler : undefined;
+  const command =
+    handler && typeof handler.bash === "string" ? handler.bash : "";
   return (
     name.startsWith("codecut-") ||
-    JSON.stringify(value).includes("hook --agent polytoken")
+    (command.includes("codecut") &&
+      command.includes("hook --agent polytoken"))
   );
 }
 
@@ -54,8 +58,10 @@ export function mergePolytokenHooks(
 } {
   const existingCodecut = input.filter(includesCodecutHook);
   const unrelated = input.filter((entry) => !includesCodecutHook(entry));
-  const desired = EVENTS.map((event) => hookDefinition(event, command));
-  const changedEvents = EVENTS.filter((event, index) => {
+  const desired = POLYTOKEN_HOOK_EVENTS.map((event) =>
+    hookDefinition(event, command),
+  );
+  const changedEvents = POLYTOKEN_HOOK_EVENTS.filter((event, index) => {
     const matches = existingCodecut.filter(
       (entry) => isObject(entry) && entry.event === event,
     );

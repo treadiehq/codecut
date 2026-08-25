@@ -14,6 +14,10 @@ import {
   userConfigDirectory,
   userPolicyPath,
 } from "../core/user.js";
+import { CLAUDE_HOOK_EVENTS } from "../install/claude.js";
+import { CODEX_HOOK_EVENTS } from "../install/codex.js";
+import { CURSOR_HOOK_EVENTS } from "../install/cursor.js";
+import { POLYTOKEN_HOOK_EVENTS } from "../install/polytoken.js";
 import { RUNTIME_RELATIVE_PATH } from "../install/runtime.js";
 
 export type RuleStatus = {
@@ -70,24 +74,12 @@ export async function inspectHookSettings(
         : path.join(baseDirectory, ".claude", "settings.json");
   const requiredHookEvents =
     hookAgent === "cursor"
-      ? [
-          "preToolUse",
-          "postToolUse",
-          "postToolUseFailure",
-          "afterAgentResponse",
-          "stop",
-        ]
+      ? CURSOR_HOOK_EVENTS
       : hookAgent === "codex"
-        ? ["PreToolUse", "PostToolUse", "Stop"]
+        ? CODEX_HOOK_EVENTS
         : hookAgent === "polytoken"
-          ? [
-              "pre_tool_use",
-              "post_tool_use",
-              "post_tool_use_failure",
-              "post_model_turn",
-              "stop",
-            ]
-        : ["PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"];
+          ? POLYTOKEN_HOOK_EVENTS
+          : CLAUDE_HOOK_EVENTS;
   let installedHookEvents: string[] = [];
   try {
     const settings = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;

@@ -133,7 +133,13 @@ describe("native Cursor integration", () => {
     const existing = {
       version: 1,
       hooks: {
-        preToolUse: [{ command: "./existing.sh", matcher: "Read" }],
+        preToolUse: [
+          {
+            command: "./existing.sh",
+            matcher: "Read",
+            description: "Alternative to codecut hook --agent cursor",
+          },
+        ],
         postToolUse: [
           { command: "papercut hook --agent cursor", matcher: "Shell" },
         ],

@@ -7,6 +7,9 @@ import { testPolicy } from "../src/commands/test.js";
 import { compilePolicy } from "../src/core/compiler.js";
 import { writePolicy } from "../src/core/project.js";
 import { installClaudeHooks } from "../src/install/claude.js";
+import { installCodexHooks } from "../src/install/codex.js";
+import { installCursorHooks } from "../src/install/cursor.js";
+import { installPolytokenHooks } from "../src/install/polytoken.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -33,7 +36,7 @@ describe("hook health status", () => {
       expect(installed.settingsPath).toBe(
         path.join(xdg, "polytoken", "hooks.json"),
       );
-      expect(installed.missingHookEvents).toHaveLength(5);
+      expect(installed.missingHookEvents).toHaveLength(7);
     } finally {
       if (previous === undefined) {
         delete process.env.XDG_CONFIG_HOME;
@@ -69,8 +72,63 @@ describe("hook health status", () => {
     expect(status.scope).toBe("project");
     expect(status.hooksInstalled).toBe(false);
     expect(status.missingHookEvents).toEqual(["Stop"]);
-    expect(status.installedHookEvents).toHaveLength(3);
+    expect(status.installedHookEvents).toHaveLength(4);
   });
+
+  it.each([
+    ["claude", "SessionStart"],
+    ["cursor", "preCompact"],
+    ["codex", "SessionStart"],
+    ["polytoken", "post_clear"],
+    ["polytoken", "post_compaction"],
+  ] as const)(
+    "reports a missing %s context-reset hook: %s",
+    async (agent, resetEvent) => {
+      const projectRoot = await mkdtemp(
+        path.join(os.tmpdir(), `codecut-${agent}-status-`),
+      );
+      temporaryDirectories.push(projectRoot);
+      const installed =
+        agent === "claude"
+          ? await installClaudeHooks(projectRoot)
+          : agent === "cursor"
+            ? await installCursorHooks(projectRoot)
+            : agent === "codex"
+              ? await installCodexHooks(projectRoot)
+              : await installPolytokenHooks(projectRoot);
+      const settings = JSON.parse(
+        await readFile(installed.settingsPath, "utf8"),
+      ) as unknown;
+      if (agent === "polytoken") {
+        if (!Array.isArray(settings)) {
+          throw new Error("Expected Polytoken hooks to be an array");
+        }
+        await writeFile(
+          installed.settingsPath,
+          JSON.stringify(
+            settings.filter(
+              (entry) =>
+                !entry ||
+                typeof entry !== "object" ||
+                Array.isArray(entry) ||
+                (entry as { event?: unknown }).event !== resetEvent,
+            ),
+          ),
+        );
+      } else {
+        const objectSettings = settings as {
+          hooks: Record<string, unknown>;
+        };
+        delete objectSettings.hooks[resetEvent];
+        await writeFile(installed.settingsPath, JSON.stringify(objectSettings));
+      }
+
+      const status = await inspectHookSettings(projectRoot, agent);
+
+      expect(status.missingHookEvents).toContain(resetEvent);
+      expect(status.installedHookEvents).not.toContain(resetEvent);
+    },
+  );
 });
 
 describe("user-level fallback without a project policy", () => {

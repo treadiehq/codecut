@@ -5,6 +5,8 @@ import {
   deriveAcknowledgementReceipts,
   deriveReceipts,
   extractAddedCommentBlocks,
+  extractAddedComments,
+  extractEditedPaths,
 } from "../src/core/events.js";
 import type {
   Directive,
@@ -161,6 +163,53 @@ describe("starter policy compilation", () => {
       directives: [
         {
           text: "Ignore warnings from generated code",
+          source: { path: "CLAUDE.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["CLAUDE.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]?.type).toBe("advisory");
+  });
+
+  it.each([
+    "Treat all warnings as errors",
+    "Treat the warnings as errors",
+    "Treat any warnings as errors",
+    "Consider all warnings as errors",
+    "Consider any warnings errors",
+  ])("recognizes warning-as-error phrasing: %s", (text) => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text,
+          source: { path: "CLAUDE.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["CLAUDE.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]).toMatchObject({
+      type: "warnings-as-errors",
+      mode: "block",
+      confirmed: true,
+    });
+  });
+
+  it.each([
+    "Do not treat all warnings as errors",
+    "Treat any warnings as errors when building documentation",
+    "Allow warnings rather than treat all warnings as errors",
+    "Treat all warnings as errors and all unit tests must pass",
+  ])("keeps unsafe warning phrasing advisory: %s", (text) => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text,
           source: { path: "CLAUDE.md", line: 1, scope: "project" },
         },
       ],
@@ -625,6 +674,40 @@ describe("starter policy enforcement", () => {
     });
   });
 
+  it.each([
+    "npm run test-integration",
+    "pnpm run test-unit",
+    "yarn test_e2e",
+    "bun run test-browser",
+  ])("recognizes separator-based test script %s", (command) => {
+    const event = hookEvent("post-tool", {
+      toolName: "Shell",
+      toolInput: { command },
+      toolOutput: "Test Files 7 passed (7)\nTests 31 passed (31)",
+    });
+
+    expect(deriveReceipts(policy(), event)[0]).toMatchObject({
+      success: true,
+      isTest: true,
+      isVerification: true,
+      location: "local",
+    });
+  });
+
+  it("does not treat a longer non-test script prefix as a test", () => {
+    const event = hookEvent("post-tool", {
+      toolName: "Shell",
+      toolInput: { command: "npm run testing-tools" },
+      toolOutput: "Test Files 7 passed (7)\nTests 31 passed (31)",
+    });
+
+    expect(deriveReceipts(policy(), event)[0]).toMatchObject({
+      success: true,
+      isTest: false,
+      isVerification: false,
+    });
+  });
+
   it("warns when the working diff exceeds the blast-radius threshold", () => {
     const activePolicy = policy();
     const blastRule = activePolicy.rules.find(
@@ -850,6 +933,42 @@ describe("starter policy enforcement", () => {
     expect(unmatchedCompletion.outcome).toBe("block");
   });
 
+  it("trusts a clean complete diff despite an ambiguous command start", () => {
+    const ambiguousVerification = verification({
+      stateFingerprint: "sha256:2222222222222222",
+    });
+    const complete = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [ambiguousVerification],
+      diffStats: {
+        files: 0,
+        added: 0,
+        deleted: 0,
+        complete: true,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+    const incomplete = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [ambiguousVerification],
+      diffStats: {
+        files: 0,
+        added: 0,
+        deleted: 0,
+        complete: false,
+        fingerprint: "sha256:2222222222222222",
+      },
+    });
+
+    expect(complete.outcome).toBe("allow");
+    expect(incomplete.outcome).toBe("block");
+    expect(incomplete.violations.map((item) => item.directive)).toContain(
+      "All unit tests must pass",
+    );
+  });
+
   it("requires tests when the working diff changed outside an edit tool", () => {
     const decision = evaluatePolicy({
       policy: policy(),
@@ -1021,6 +1140,96 @@ describe("starter policy enforcement", () => {
     ]);
     expect(JSON.stringify(receipts)).not.toContain("APP-421");
     expect(JSON.stringify(receipts)).not.toContain("AGENTS.md");
+  });
+
+  it("extracts and enforces nested MultiEdit changes", () => {
+    const activePolicy = policy();
+    const event = hookEvent("post-tool", {
+      toolName: "MultiEdit",
+      toolInput: {
+        edits: [
+          {
+            file_path: "src/a.ts",
+            old_string: "const value = 1;",
+            new_string: "// Per the prompt, keep this workaround.",
+          },
+          {
+            file_path: "src/b.ts",
+            old_string: "const value = 2;",
+            new_string: "const value = 3;",
+          },
+        ],
+      },
+      toolOutput: "updated",
+    });
+
+    expect(extractEditedPaths(event)).toEqual(["src/a.ts", "src/b.ts"]);
+    expect(extractAddedComments(event)).toEqual([
+      "Per the prompt, keep this workaround.",
+    ]);
+    expect(
+      deriveReceipts(activePolicy, event)
+        .filter((receipt) => receipt.kind === "edit")
+        .map((receipt) => ({
+          path: receipt.path,
+          changedLines: receipt.changedLines,
+        })),
+    ).toEqual([
+      { path: "src/a.ts", changedLines: 1 },
+      { path: "src/b.ts", changedLines: 1 },
+    ]);
+    expect(
+      evaluatePolicy({
+        policy: activePolicy,
+        event,
+        receipts: [],
+      }).outcome,
+    ).toBe("warn");
+
+    const sharedPathEvent = hookEvent("post-tool", {
+      toolName: "MultiEdit",
+      toolInput: {
+        file_path: "src/shared.ts",
+        edits: [
+          {
+            old_string: "const value = 1;",
+            new_string: "// Per the instructions, keep this workaround.",
+          },
+        ],
+      },
+    });
+    expect(extractEditedPaths(sharedPathEvent)).toEqual(["src/shared.ts"]);
+    expect(extractAddedComments(sharedPathEvent)).toEqual([
+      "Per the instructions, keep this workaround.",
+    ]);
+  });
+
+  it("keeps MultiEdit comments associated with their edited files", () => {
+    const event = hookEvent("post-tool", {
+      toolName: "MultiEdit",
+      toolInput: {
+        edits: [
+          {
+            file_path: "README.md",
+            old_string: "Durable documentation.",
+            new_string: "// Per the prompt, temporary documentation.",
+          },
+          {
+            file_path: "src/example.ts",
+            old_string: "const value = 1;",
+            new_string: "const value = 2;",
+          },
+        ],
+      },
+    });
+
+    expect(
+      evaluatePolicy({
+        policy: policy(),
+        event,
+        receipts: [],
+      }).outcome,
+    ).toBe("allow");
   });
 
   it("flags comment blocks longer than the configured line limit", () => {

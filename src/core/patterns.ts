@@ -1,5 +1,5 @@
 export const DEFAULT_TEST_COMMAND_PATTERNS = [
-  String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?:\s|$|:)`,
+  String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?:[\s:_-]|$)`,
   String.raw`(?:^|[;&|]\s*|\s)(?:npx\s+)?vitest(?:\s|$)`,
   String.raw`(?:^|[;&|]\s*|\s)(?:python(?:3)?\s+-m\s+)?pytest(?:\s|$)`,
   String.raw`(?:^|[;&|]\s*|\s)cargo\s+test(?:\s|$)`,
@@ -68,7 +68,7 @@ export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
   // Well-known standards/crypto prefixes are excluded even in uppercase.
   String.raw`(?-i)\b(?!(?:SHA|UTF|AES|RSA|CRC|ISO|RFC|IEEE|CVE|TLS|HTTP|HMAC)-\d)[A-Z][A-Z0-9]{1,9}-\d+\b`,
   String.raw`(?:\.cursor/(?:plans|rules)|/tmp/|temporary\s+spec|ephemeral\s+spec)`,
-  String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent|I\s+(?:added|changed|implemented))\b`,
+  String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent\s+(?:added|changed|implemented)|I\s+(?:added|changed|implemented))\b`,
 ];
 
 const CONSOLE_DEBUG_PATTERN =

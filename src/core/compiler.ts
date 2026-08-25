@@ -137,7 +137,7 @@ function classifyDirective(
     !/\b(?:allow|ignore|except|exclude)\b.*\bwarnings?\b|\bwarnings?\b.*\b(?:may|can)\b/i.test(
       normalized,
     ) &&
-    /(?:treat|consider)\s+warnings?.*(?:as\s+)?errors?|fail(?:ure)?\s+on\s+warnings?|\bno\s+warnings?\b/i.test(
+    /\b(?:treat|consider)\s+(?:(?:all|any|the)\s+)?warnings?\b.*(?:as\s+)?errors?\b|\bfail(?:ure)?\s+on\s+warnings?\b|\bno\s+warnings?\b/i.test(
       normalized,
     );
   const passingTestRule =

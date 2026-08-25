@@ -1,8 +1,6 @@
 import {
-  extractAddedCommentBlocks,
-  extractAddedComments,
+  extractAddedCommentBlocksByPath,
   extractCommand,
-  extractEditedPaths,
   receiptMatchesDiffState,
 } from "./events.js";
 import { matchesAny } from "./patterns.js";
@@ -144,51 +142,18 @@ function evaluatePostTool(
     }
   }
 
-  const comments = extractAddedComments(event);
-  const commentBlocks = extractAddedCommentBlocks(event);
-  const editedPaths = extractEditedPaths(event);
+  const addedCommentBlocks = extractAddedCommentBlocksByPath(event);
   for (const rule of policy.rules) {
     if (
       !rule.enabled ||
       rule.mode === "off" ||
-      rule.type !== "comment-quality" ||
-      !editedPaths.some((editedPath) =>
-        matchesAny(editedPath, rule.filePatterns),
-      )
+      rule.type !== "comment-quality"
     ) {
       continue;
     }
-    const matches = comments.filter((comment) =>
-      matchesAny(comment, rule.bannedPatterns),
-    );
-    const lineLimit = rule.maxCommentLines;
-    const longBlocks =
-      lineLimit === undefined
-        ? []
-        : commentBlocks.filter((block) => block.length > lineLimit);
-    if (matches.length > 0 || longBlocks.length > 0) {
-      const evidence = [
-        matches.length > 0
-          ? `${countLabel(matches.length, "new code comment")} mentions temporary agent context.`
-          : "",
-        longBlocks.length > 0 && lineLimit !== undefined
-          ? `${countLabel(longBlocks.length, "new code comment")} runs longer than ${countLabel(lineLimit, "line")}.`
-          : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const recovery = [
-        matches.length > 0
-          ? "Remove temporary agent context; do not mention prompts, instructions, tickets, or temporary files."
-          : "",
-        longBlocks.length > 0 && lineLimit !== undefined
-          ? `Shorten the comment to at most ${countLabel(lineLimit, "line")}.`
-          : "",
-        "Keep only lasting code constraints.",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      violations.push(violation(rule, evidence, recovery));
+    const commentViolation = evaluateCommentQuality(rule, addedCommentBlocks);
+    if (commentViolation) {
+      violations.push(commentViolation);
     }
   }
 
@@ -225,10 +190,17 @@ function evaluateCommentQuality(
   ]
     .filter(Boolean)
     .join(" ");
-  const recovery =
+  const recovery = [
     matches.length > 0
-      ? "Remove it or explain only a lasting code constraint. Do not mention prompts, instructions, tickets, or temporary files."
-      : `Run a subagent to review and de-slopify the comment, then shorten it to at most ${countLabel(rule.maxCommentLines ?? 1, "line")} or keep only a lasting code constraint.`;
+      ? "Remove temporary agent context; do not mention prompts, instructions, tickets, or temporary files."
+      : "",
+    longBlocks.length > 0 && rule.maxCommentLines !== undefined
+      ? `Run a subagent to review and de-slopify the comment, then shorten it to at most ${countLabel(rule.maxCommentLines, "line")}.`
+      : "",
+    "Keep only lasting code constraints.",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return violation(rule, evidence, recovery);
 }
 
@@ -253,7 +225,8 @@ function evaluateStop(
             receipt.stateFingerprint !== diffStats.fingerprint) ||
           ((receipt.kind === "command" || receipt.kind === "tool") &&
             receipt.stateFingerprint !== undefined &&
-            receipt.stateBeforeFingerprint === undefined) ||
+            receipt.stateBeforeFingerprint === undefined &&
+            !diffStats.complete) ||
           ((receipt.kind === "command" || receipt.kind === "tool") &&
             receipt.stateBeforeFingerprint !== undefined &&
             receipt.stateBeforeFingerprint !== diffStats.fingerprint),

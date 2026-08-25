@@ -68,6 +68,7 @@ export function warningAlreadyDelivered(
     (receipt) =>
       receipt.kind === "decision" &&
       receipt.outcome === "warn" &&
+      receipt.warningDelivered !== false &&
       JSON.stringify([...(receipt.ruleIds ?? [])].sort()) === sortedRuleIds &&
       (lastContextReset === undefined ||
         receipt.timestamp > lastContextReset),
@@ -317,8 +318,6 @@ export async function runHook(
         receipts,
         decision.violations.map((violation) => violation.ruleId),
       );
-    await appendReceipts(eventsFile, [decisionReceipt(event, decision)]);
-
     const outputEvent =
       agent === "polytoken" && warningAlreadySent
         ? { ...event, stopHookActive: true }
@@ -331,6 +330,13 @@ export async function runHook(
           : agent === "polytoken"
             ? formatPolytokenOutput(outputEvent, decision)
             : formatClaudeOutput(outputEvent, decision);
+    const warningDelivered =
+      decision.outcome === "warn" && agent === "polytoken"
+        ? typeof output.reason === "string" && output.reason.trim().length > 0
+        : undefined;
+    await appendReceipts(eventsFile, [
+      decisionReceipt(event, decision, new Date(), warningDelivered),
+    ]);
     process.stdout.write(`${JSON.stringify(output)}\n`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -45,6 +45,7 @@ describe("Claude hook installation", () => {
           PreToolUse: [
             {
               matcher: "Read",
+              description: "Alternative to codecut hook --agent claude",
               hooks: [{ type: "command", command: "./existing-hook.sh" }],
             },
             {

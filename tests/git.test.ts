@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  inspectAddedCommentBlocks,
   inspectDiff,
   workingTreeFingerprint,
 } from "../src/core/git.js";
@@ -166,6 +167,66 @@ describe("working-tree fingerprints", () => {
     const second = await workingTreeFingerprint(projectRoot);
 
     expect(second).not.toBe(first);
+  });
+
+  it("scopes and normalizes diffs below the Git root", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-nested-git-diff-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    const projectRoot = path.join(directory, "packages", "app");
+    const projectSource = path.join(projectRoot, "src");
+    const siblingRoot = path.join(directory, "packages", "other");
+    await Promise.all([
+      mkdir(projectSource, { recursive: true }),
+      mkdir(siblingRoot, { recursive: true }),
+    ]);
+    const projectFile = path.join(projectSource, "example.ts");
+    const siblingFile = path.join(siblingRoot, "outside.ts");
+    await Promise.all([
+      writeFile(projectFile, "export const value = 1;\n"),
+      writeFile(siblingFile, "export const outside = 1;\n"),
+    ]);
+    await execFileAsync("git", ["add", "."], { cwd: directory });
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+      { cwd: directory },
+    );
+
+    await Promise.all([
+      writeFile(
+        projectFile,
+        "// Per the prompt, keep this workaround.\nexport const value = 2;\n",
+      ),
+      writeFile(
+        siblingFile,
+        "// Per the prompt, ignore this sibling.\nexport const outside = 2;\n",
+      ),
+    ]);
+
+    await expect(inspectDiff(projectRoot, [])).resolves.toMatchObject({
+      files: 1,
+      added: 2,
+      deleted: 1,
+      complete: true,
+    });
+    await expect(inspectAddedCommentBlocks(projectRoot)).resolves.toEqual([
+      {
+        path: "src/example.ts",
+        comments: ["Per the prompt, keep this workaround."],
+      },
+    ]);
   });
 
   it("fingerprints non-Git projects without including Codecut state", async () => {

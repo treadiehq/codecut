@@ -6,7 +6,7 @@ const RUNTIME_PATH = RUNTIME_RELATIVE_PATH.split(path.sep).join("/");
 export const CURSOR_HOOK_COMMAND =
   `CODECUT_ROOT="\${CURSOR_PROJECT_DIR:-$PWD}"; "$CODECUT_ROOT/${RUNTIME_PATH}" hook --agent cursor`;
 const TOOL_MATCHER = "Shell|Edit|Write|MultiEdit|NotebookEdit|apply_patch|MCP: .*";
-const EVENTS = [
+export const CURSOR_HOOK_EVENTS = [
   "preToolUse",
   "postToolUse",
   "postToolUseFailure",
@@ -16,7 +16,7 @@ const EVENTS = [
   "preCompact",
 ] as const;
 
-type CursorHookEvent = (typeof EVENTS)[number];
+type CursorHookEvent = (typeof CURSOR_HOOK_EVENTS)[number];
 type JsonObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is JsonObject {
@@ -24,19 +24,14 @@ function isObject(value: unknown): value is JsonObject {
 }
 
 function includesCodecutHook(value: unknown): boolean {
-  if (typeof value === "string") {
-    return (
-      (value.includes("codecut") || value.includes("papercut")) &&
-      value.includes("hook --agent cursor")
-    );
+  if (!isObject(value) || typeof value.command !== "string") {
+    return false;
   }
-  if (Array.isArray(value)) {
-    return value.some(includesCodecutHook);
-  }
-  if (isObject(value)) {
-    return Object.values(value).some(includesCodecutHook);
-  }
-  return false;
+  return (
+    (value.command.includes("codecut") ||
+      value.command.includes("papercut")) &&
+    value.command.includes("hook --agent cursor")
+  );
 }
 
 function hookDefinition(event: CursorHookEvent, command: string): JsonObject {
@@ -70,7 +65,7 @@ export function mergeCursorHooks(
   settings.hooks = hooks;
   const changedEvents: CursorHookEvent[] = [];
 
-  for (const event of EVENTS) {
+  for (const event of CURSOR_HOOK_EVENTS) {
     const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
     const unrelated = existing.filter((entry) => !includesCodecutHook(entry));
     const existingCodecut = existing.filter(includesCodecutHook);
@@ -155,5 +150,5 @@ export async function installCursorHooks(
 }
 
 export function cursorHookEvents(): readonly CursorHookEvent[] {
-  return EVENTS;
+  return CURSOR_HOOK_EVENTS;
 }

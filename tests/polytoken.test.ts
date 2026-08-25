@@ -10,7 +10,10 @@ import {
   POLYTOKEN_HOOK_COMMAND,
 } from "../src/install/polytoken.js";
 import { warningAlreadyDelivered } from "../src/commands/hook.js";
-import { contextResetReceipt } from "../src/core/events.js";
+import {
+  contextResetReceipt,
+  decisionReceipt,
+} from "../src/core/events.js";
 
 const blocked: PolicyDecision = {
   outcome: "block",
@@ -155,6 +158,7 @@ describe("native Polytoken integration", () => {
         name: "log-edits",
         event: "post_tool_use",
         matcher: "file_edit_*",
+        description: "Alternative to codecut hook --agent polytoken",
         handler: { bash: "cat >> /tmp/edits.log" },
       },
     ];
@@ -173,10 +177,34 @@ describe("native Polytoken integration", () => {
       ).handler.bash,
     ).toBe(POLYTOKEN_HOOK_COMMAND);
   });
+
+  it("preserves user hooks with Polytoken-like text but no Codecut command", () => {
+    const existing = [
+      {
+        name: "audit-logger",
+        event: "post_tool_use",
+        _comment: "Logs when hook --agent polytoken runs",
+        handler: { bash: "audit-log.sh" },
+      },
+      {
+        name: "custom-logger",
+        event: "stop",
+        handler: { bash: "my-script hook --agent polytoken --verbose" },
+      },
+    ];
+
+    const merged = mergePolytokenHooks(existing);
+
+    expect(merged.settings.slice(0, existing.length)).toEqual(existing);
+  });
 });
 
 describe("warning delivery dedup", () => {
-  const warnReceipt = (timestamp: string, ruleIds: string[]): Receipt => ({
+  const warnReceipt = (
+    timestamp: string,
+    ruleIds: string[],
+    warningDelivered?: boolean,
+  ): Receipt => ({
     version: 1,
     id: "receipt-1",
     timestamp,
@@ -184,6 +212,7 @@ describe("warning delivery dedup", () => {
     kind: "decision",
     outcome: "warn",
     ruleIds,
+    ...(warningDelivered === undefined ? {} : { warningDelivered }),
   });
 
   it("suppresses an identical warning for as long as its context survives", () => {
@@ -204,6 +233,40 @@ describe("warning delivery dedup", () => {
         ["comment-quality-1"],
       ),
     ).toBe(false);
+  });
+
+  it("does not suppress a stop warning after an invisible pre-tool warning", () => {
+    const ruleIds = warning.violations.map((violation) => violation.ruleId);
+    const hiddenWarning = warnReceipt(
+      "2026-07-29T12:00:00.000Z",
+      ruleIds,
+      false,
+    );
+
+    expect(warningAlreadyDelivered([hiddenWarning], ruleIds)).toBe(false);
+
+    const stopEvent = normalizePolytokenEvent(
+      { event: "stop" },
+      new Date("2026-07-29T12:00:01.000Z"),
+      {
+        POLYTOKEN_SESSION_ID: "session-1",
+        POLYTOKEN_PROJECT_DIR: "/tmp/project",
+      },
+    );
+    expect(formatPolytokenOutput(stopEvent, warning)).toMatchObject({
+      outcome: "continue",
+      reason: expect.stringContaining("Run tests locally"),
+    });
+
+    const deliveredWarning = decisionReceipt(
+      stopEvent,
+      warning,
+      new Date("2026-07-29T12:00:01.000Z"),
+      true,
+    );
+    expect(warningAlreadyDelivered([hiddenWarning, deliveredWarning], ruleIds)).toBe(
+      true,
+    );
   });
 
   it("re-warns after a context reset", () => {

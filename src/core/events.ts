@@ -8,6 +8,7 @@ import {
   countWarningLines,
   matchesAny,
 } from "./patterns.js";
+import type { AddedCommentBlock } from "./git.js";
 import type {
   DiffStats,
   NormalizedHookEvent,
@@ -206,12 +207,53 @@ function commandFingerprint(command: string): string {
   return `sha256:${digest}`;
 }
 
+type EditEntry = {
+  path?: string;
+  content?: string;
+};
+
+function editPath(input: unknown): string | undefined {
+  for (const key of ["file_path", "path", "notebook_path"]) {
+    const value = objectValue(input, key);
+    if (typeof value === "string") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function editContent(input: unknown): string | undefined {
+  const content =
+    objectValue(input, "new_string") ?? objectValue(input, "content");
+  return typeof content === "string" ? content : undefined;
+}
+
+function nestedEditEntries(event: NormalizedHookEvent): EditEntry[] | undefined {
+  const edits = objectValue(event.toolInput, "edits");
+  if (!Array.isArray(edits)) {
+    return undefined;
+  }
+  const parentPath = editPath(event.toolInput);
+  return edits.flatMap((edit) =>
+    edit && typeof edit === "object" && !Array.isArray(edit)
+      ? [{ path: editPath(edit) ?? parentPath, content: editContent(edit) }]
+      : [],
+  );
+}
+
 export function extractEditedPaths(event: NormalizedHookEvent): string[] {
   const paths = new Set<string>();
-  for (const key of ["file_path", "path", "notebook_path"]) {
-    const value = objectValue(event.toolInput, key);
-    if (typeof value === "string") {
-      paths.add(value);
+  const nestedEdits = nestedEditEntries(event);
+  if (nestedEdits) {
+    for (const edit of nestedEdits) {
+      if (edit.path) {
+        paths.add(edit.path);
+      }
+    }
+  } else {
+    const parentPath = editPath(event.toolInput);
+    if (parentPath) {
+      paths.add(parentPath);
     }
   }
 
@@ -295,14 +337,32 @@ function addedLines(event: NormalizedHookEvent): CommentLine[] {
     return patchAddedLines(command);
   }
 
-  const content =
-    objectValue(event.toolInput, "new_string") ??
-    objectValue(event.toolInput, "content");
-  return typeof content === "string"
-    ? content
+  const nestedEdits = nestedEditEntries(event);
+  if (nestedEdits) {
+    const lines: CommentLine[] = [];
+    let nextLine = 1;
+    for (const edit of nestedEdits) {
+      if (edit.content === undefined) {
+        continue;
+      }
+      const contentLines = edit.content.split(/\r?\n/);
+      lines.push(
+        ...contentLines.map((text, index) => ({
+          line: nextLine + index,
+          text,
+        })),
+      );
+      nextLine += contentLines.length + 1;
+    }
+    return lines;
+  }
+
+  const content = editContent(event.toolInput);
+  return content === undefined
+    ? []
+    : content
         .split(/\r?\n/)
-        .map((text, index) => ({ line: index + 1, text }))
-    : [];
+        .map((text, index) => ({ line: index + 1, text }));
 }
 
 export function extractAddedComments(event: NormalizedHookEvent): string[] {
@@ -325,7 +385,42 @@ export function extractAddedCommentBlocks(
   ).map((block) => block.map((comment) => comment.text));
 }
 
-function estimatedChangedLines(event: NormalizedHookEvent): number | undefined {
+export function extractAddedCommentBlocksByPath(
+  event: NormalizedHookEvent,
+): AddedCommentBlock[] {
+  if (!isEditTool(event.toolName)) {
+    return [];
+  }
+
+  const nestedEdits = nestedEditEntries(event);
+  if (nestedEdits) {
+    return nestedEdits.flatMap((edit) => {
+      if (edit.content === undefined) {
+        return [];
+      }
+      return groupCommentBlocks(
+        scanComments(
+          edit.content
+            .split(/\r?\n/)
+            .map((text, index) => ({ line: index + 1, text })),
+        ),
+      ).map((block) => ({
+        path: edit.path ?? "unknown",
+        comments: block.map((comment) => comment.text),
+      }));
+    });
+  }
+
+  const paths = extractEditedPaths(event);
+  return (paths.length > 0 ? paths : ["unknown"]).flatMap((path) =>
+    extractAddedCommentBlocks(event).map((comments) => ({ path, comments })),
+  );
+}
+
+function estimatedChangedLines(
+  event: NormalizedHookEvent,
+  editedPath?: string,
+): number | undefined {
   const command = extractCommand(event.toolInput);
   if (command?.includes("*** Begin Patch")) {
     return command
@@ -336,10 +431,21 @@ function estimatedChangedLines(event: NormalizedHookEvent): number | undefined {
       ).length;
   }
 
-  const content =
-    objectValue(event.toolInput, "content") ??
-    objectValue(event.toolInput, "new_string");
-  if (typeof content === "string") {
+  const nestedEdits = nestedEditEntries(event);
+  if (nestedEdits) {
+    const matchingEdits = editedPath
+      ? nestedEdits.filter((edit) => edit.path === editedPath)
+      : nestedEdits;
+    const counts = matchingEdits.flatMap((edit) =>
+      edit.content === undefined ? [] : [edit.content.split(/\r?\n/).length],
+    );
+    return counts.length > 0
+      ? counts.reduce((total, count) => total + count, 0)
+      : undefined;
+  }
+
+  const content = editContent(event.toolInput);
+  if (content !== undefined) {
     return content.split(/\r?\n/).length;
   }
   return undefined;
@@ -416,7 +522,6 @@ export function deriveReceipts(
     !toolOutputFailed(event.toolOutput);
   if (isEditTool(event.toolName) && event.stage === "post-tool") {
     const paths = extractEditedPaths(event);
-    const changedLines = estimatedChangedLines(event);
     for (const editedPath of paths.length > 0 ? paths : ["unknown"]) {
       receipts.push({
         version: 1,
@@ -425,7 +530,10 @@ export function deriveReceipts(
         sessionId: event.sessionId,
         kind: "edit",
         path: editedPath,
-        changedLines,
+        changedLines: estimatedChangedLines(
+          event,
+          editedPath === "unknown" ? undefined : editedPath,
+        ),
         toolName: event.toolName,
         toolCallId: event.toolCallId,
       });
@@ -608,6 +716,7 @@ export function decisionReceipt(
   event: NormalizedHookEvent,
   decision: PolicyDecision,
   now = new Date(),
+  warningDelivered?: boolean,
 ): Receipt {
   return {
     version: 1,
@@ -616,6 +725,7 @@ export function decisionReceipt(
     sessionId: event.sessionId,
     kind: "decision",
     outcome: decision.outcome,
+    ...(warningDelivered === undefined ? {} : { warningDelivered }),
     ruleIds: decision.violations.map((violation) => violation.ruleId),
   };
 }

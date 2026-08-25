@@ -14,9 +14,14 @@ const TOOL_MATCHER = "Bash|apply_patch|Edit|Write|mcp__.*";
 // Codex mirrors Claude's SessionStart sources; compact fires after
 // compaction (clear included for parity, harmless when never emitted).
 const SESSION_START_MATCHER = "clear|compact";
-const EVENTS = ["PreToolUse", "PostToolUse", "Stop", "SessionStart"] as const;
+export const CODEX_HOOK_EVENTS = [
+  "PreToolUse",
+  "PostToolUse",
+  "Stop",
+  "SessionStart",
+] as const;
 
-type CodexHookEvent = (typeof EVENTS)[number];
+type CodexHookEvent = (typeof CODEX_HOOK_EVENTS)[number];
 type JsonObject = Record<string, unknown>;
 
 function isObject(value: unknown): value is JsonObject {
@@ -24,16 +29,16 @@ function isObject(value: unknown): value is JsonObject {
 }
 
 function includesCodecutHook(value: unknown): boolean {
-  if (typeof value === "string") {
-    return value.includes("codecut") && value.includes("hook --agent codex");
+  if (!isObject(value) || !Array.isArray(value.hooks)) {
+    return false;
   }
-  if (Array.isArray(value)) {
-    return value.some(includesCodecutHook);
-  }
-  if (isObject(value)) {
-    return Object.values(value).some(includesCodecutHook);
-  }
-  return false;
+  return value.hooks.some(
+    (hook) =>
+      isObject(hook) &&
+      typeof hook.command === "string" &&
+      hook.command.includes("codecut") &&
+      hook.command.includes("hook --agent codex"),
+  );
 }
 
 const DEFAULT_COMMANDS = {
@@ -79,7 +84,7 @@ export function mergeCodexHooks(
   settings.hooks = hooks;
   const changedEvents: CodexHookEvent[] = [];
 
-  for (const event of EVENTS) {
+  for (const event of CODEX_HOOK_EVENTS) {
     const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
     const unrelated = existing.filter((entry) => !includesCodecutHook(entry));
     const existingCodecut = existing.filter(includesCodecutHook);

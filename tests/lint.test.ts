@@ -194,6 +194,10 @@ describe("lint checks", () => {
       "The CPU instructions are decoded here",
       "Angular directives are components without views",
       "Attribute directives change appearance",
+      "Continue the agent loop when stop checks need recovery",
+      "Record that the agent's context was cleared or compacted",
+      "The agent pattern decouples message handling",
+      "Both discard conversation context the agent was relying on",
     ];
     const commonTermFiles = parseUnifiedDiff(
       [
@@ -222,6 +226,9 @@ describe("lint checks", () => {
       "Preserve the agent prompt for debugging",
       "These agent instructions are temporary",
       "The Codecut directives require this workaround",
+      "The agent added this implementation",
+      "The agent changed the logic here",
+      "The agent implemented this workaround",
     ];
     const agentTermFiles = parseUnifiedDiff(
       [

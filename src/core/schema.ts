@@ -177,6 +177,7 @@ export const receiptSchema = z.object({
   location: z.enum(["local", "remote", "unknown"]).optional(),
   warningCount: z.number().int().nonnegative().optional(),
   outcome: z.enum(["allow", "warn", "block"]).optional(),
+  warningDelivered: z.boolean().optional(),
   ruleIds: z.array(z.string()).optional(),
   diffFiles: z.number().int().nonnegative().optional(),
   diffChangedLines: z.number().int().nonnegative().optional(),

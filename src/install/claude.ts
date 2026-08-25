@@ -10,12 +10,15 @@ const TOOL_MATCHER = "Bash|Edit|Write|MultiEdit|NotebookEdit|apply_patch|mcp__.*
 // resume, and fork keep (or freshly scope) it.
 const SESSION_START_MATCHER = "clear|compact";
 
-type HookEventName =
-  | "PreToolUse"
-  | "PostToolUse"
-  | "PostToolUseFailure"
-  | "Stop"
-  | "SessionStart";
+export const CLAUDE_HOOK_EVENTS = [
+  "PreToolUse",
+  "PostToolUse",
+  "PostToolUseFailure",
+  "Stop",
+  "SessionStart",
+] as const;
+
+type HookEventName = (typeof CLAUDE_HOOK_EVENTS)[number];
 
 type JsonObject = Record<string, unknown>;
 
@@ -42,19 +45,17 @@ function hookDefinition(event: HookEventName, command: string): JsonObject {
 }
 
 function includesCodecutHook(value: unknown): boolean {
-  if (typeof value === "string") {
-    return (
-      (value.includes("codecut") || value.includes("papercut")) &&
-      value.includes("hook --agent")
-    );
+  if (!isObject(value) || !Array.isArray(value.hooks)) {
+    return false;
   }
-  if (Array.isArray(value)) {
-    return value.some(includesCodecutHook);
-  }
-  if (isObject(value)) {
-    return Object.values(value).some(includesCodecutHook);
-  }
-  return false;
+  return value.hooks.some(
+    (hook) =>
+      isObject(hook) &&
+      typeof hook.command === "string" &&
+      (hook.command.includes("codecut") ||
+        hook.command.includes("papercut")) &&
+      hook.command.includes("hook --agent claude"),
+  );
 }
 
 async function readClaudeSettings(settingsPath: string): Promise<JsonObject> {
@@ -114,16 +115,9 @@ export async function installClaudeHooks(
 
   const hooks = isObject(settings.hooks) ? settings.hooks : {};
   settings.hooks = hooks;
-  const events: HookEventName[] = [
-    "PreToolUse",
-    "PostToolUse",
-    "PostToolUseFailure",
-    "Stop",
-    "SessionStart",
-  ];
   const addedEvents: HookEventName[] = [];
 
-  for (const event of events) {
+  for (const event of CLAUDE_HOOK_EVENTS) {
     const existing = Array.isArray(hooks[event]) ? hooks[event] : [];
     const unrelated = existing.filter((entry) => !includesCodecutHook(entry));
     const existingCodecut = existing.filter(includesCodecutHook);
