@@ -13,6 +13,7 @@ Codecut explains what happened and how to fix it.
 - Temporary agent context left in code comments
 - Code comments longer than a limit you set ("no comments longer than one line")
 - Comment-heavy changes above a percentage you set ("keep comment lines below 25% of added source lines")
+- `git push` commands whose outgoing branch diff has Codecut lint findings
 - Draft or missing GitHub PRs when you require a ready-for-review handoff
 - Large changes that need an explanation
 
@@ -93,6 +94,40 @@ Codecut checks comment density after at least 20 non-blank source lines have
 been added, which avoids noisy warnings on small edits. Density warnings tell
 the agent to remove comments that narrate history or process or restate code,
 while preserving comments about lasting constraints.
+
+For strict comment hygiene, combine the density budget with a one-line comment
+limit and the pre-push gate:
+
+```md
+- Keep comment lines below 15% of added source lines
+- Do not add code comments longer than one line
+- Require clean Codecut lint for git push
+```
+
+The first two rules define the measurable comment budget. The third makes
+violations block supported `git push` commands instead of relying on another
+instruction for the agent to remember.
+
+### Require clean lint before push
+
+To stop an agent from pushing deterministic Codecut findings, add this explicit
+opt-in rule:
+
+```md
+- Require clean Codecut lint for git push
+```
+
+Refresh the policy with `--accept` to activate the blocking rule. Before a
+supported `git push`, Codecut compares `HEAD` with the local remote-tracking
+branch and runs the configured comment-quality, TODO, debug-artifact, and
+blast-radius checks. Findings block the command and include a copy-pasteable
+`codecut lint --range <base>..<head>` recovery command.
+
+Simple current-branch pushes are supported, including `git push`,
+`git push -u origin HEAD`, and explicit current-branch refspecs. Multi-branch
+pushes and missing or stale local tracking information produce a warning
+instead of pretending the outgoing diff was verified. Run `git fetch` before
+pushing when the remote branch may have changed.
 
 ### Require a ready GitHub PR
 
@@ -182,6 +217,7 @@ request and judge the feedback for yourself:
 codecut lint                       # uncommitted changes
 codecut lint --staged              # staged changes
 codecut lint --base origin/main    # a pull request branch
+codecut lint --range origin/main..HEAD # an exact Git revision range
 codecut lint --pr 123              # a GitHub pull request (requires gh)
 git diff main...HEAD | codecut lint --patch -
 ```

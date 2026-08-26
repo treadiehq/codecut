@@ -227,6 +227,125 @@ describe("starter policy compilation", () => {
     expect(compiled.rules[0]?.type).toBe("advisory");
   });
 
+  it.each([
+    "Require clean Codecut lint for git push",
+    "Git push must pass Codecut lint",
+  ])("recognizes an explicit clean-push requirement: %s", (text) => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text,
+          source: { path: "AGENTS.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]).toMatchObject({
+      type: "require-clean-push",
+      mode: "block",
+      confirmed: true,
+      checks: [
+        "comment-quality",
+        "todo-comments",
+        "debug-artifacts",
+        "blast-radius",
+      ],
+    });
+  });
+
+  it.each([
+    "Do not require clean Codecut lint for git push",
+    "Require clean Codecut lint for git push when releasing",
+    "Git push must pass Codecut lint and all unit tests must pass",
+  ])("keeps unsafe clean-push guidance advisory: %s", (text) => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text,
+          source: { path: "AGENTS.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]?.type).toBe("advisory");
+  });
+
+  it("blocks push findings and warns when the push diff is unavailable", () => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text: "Require clean Codecut lint for git push",
+          source: { path: "AGENTS.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+    const event = hookEvent("pre-tool", {
+      toolName: "Shell",
+      toolInput: { command: "git push" },
+    });
+    const evaluate = (
+      pushLintEvidence: NonNullable<
+        Parameters<typeof evaluatePolicy>[0]["pushLintEvidence"]
+      >,
+    ) =>
+      evaluatePolicy({
+        policy: compiled,
+        event,
+        receipts: [],
+        pushLintEvidence,
+      });
+
+    expect(
+      evaluate({
+        status: "clean",
+        branch: "feature/example",
+        base: "refs/remotes/origin/main",
+        range: "1111111111111111111111111111111111111111..2222222222222222222222222222222222222222",
+        files: 1,
+      }).outcome,
+    ).toBe("allow");
+
+    const findings = evaluate({
+      status: "findings",
+      branch: "feature/example",
+      base: "refs/remotes/origin/main",
+      range: "1111111111111111111111111111111111111111..2222222222222222222222222222222222222222",
+      files: 1,
+      findings: [
+        {
+          check: "debug-artifacts",
+          path: "src/example.ts",
+          line: 4,
+          message: "Possible leftover debug statement.",
+        },
+      ],
+    });
+    expect(findings.outcome).toBe("block");
+    expect(findings.violations[0]).toMatchObject({
+      evidence: expect.stringContaining("src/example.ts:4"),
+      recovery: expect.stringContaining("codecut lint --range"),
+    });
+
+    const unverified = evaluate({
+      status: "unverified",
+      reason: "no-base",
+    });
+    expect(unverified.outcome).toBe("warn");
+    expect(unverified.violations[0]).toMatchObject({
+      severity: "warn",
+      recovery: expect.stringContaining("codecut lint --base"),
+    });
+  });
+
   it("enforces verified PR failures and warns when verification is unavailable", () => {
     const compiled = compilePolicy({
       directives: [

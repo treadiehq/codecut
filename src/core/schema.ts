@@ -2,6 +2,15 @@ import { z } from "zod";
 import { SUPPORTED_AGENT_NAMES } from "./agents.js";
 import { compilePattern } from "./patterns.js";
 
+export const LINT_CHECKS = [
+  "comment-quality",
+  "todo-comments",
+  "debug-artifacts",
+  "blast-radius",
+] as const;
+export const lintCheckSchema = z.enum(LINT_CHECKS);
+export type LintCheck = z.infer<typeof lintCheckSchema>;
+
 export const agentNameSchema = z.enum([
   ...SUPPORTED_AGENT_NAMES,
   "unknown",
@@ -79,6 +88,12 @@ const readyGithubPrRuleSchema = z.object({
   type: z.literal("require-ready-github-pr"),
 });
 
+const cleanPushRuleSchema = z.object({
+  ...ruleBase,
+  type: z.literal("require-clean-push"),
+  checks: z.array(lintCheckSchema).min(1).default([...LINT_CHECKS]),
+});
+
 const commentQualityRuleSchema = z.object({
   ...ruleBase,
   type: z.literal("comment-quality"),
@@ -106,6 +121,7 @@ export const policyRuleSchema = z.discriminatedUnion("type", [
   blastRadiusRuleSchema,
   verificationEvidenceRuleSchema,
   readyGithubPrRuleSchema,
+  cleanPushRuleSchema,
   commentQualityRuleSchema,
   metaComplianceRuleSchema,
   advisoryRuleSchema,

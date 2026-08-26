@@ -31,16 +31,15 @@ import {
   type SourceLanguage,
 } from "../core/patterns.js";
 import { findProjectRoot, loadPolicy } from "../core/project.js";
+import {
+  LINT_CHECKS,
+  type LintCheck,
+  type Policy,
+} from "../core/schema.js";
 
 const execFileAsync = promisify(execFile);
 
-export const LINT_CHECKS = [
-  "comment-quality",
-  "todo-comments",
-  "debug-artifacts",
-  "blast-radius",
-] as const;
-export type LintCheck = (typeof LINT_CHECKS)[number];
+export { LINT_CHECKS, type LintCheck } from "../core/schema.js";
 
 const CHECK_INFO: Record<LintCheck, { summary: string; recovery: string }> = {
   "comment-quality": {
@@ -142,21 +141,24 @@ export function parseLintChecks(value: string): Set<LintCheck> {
 export async function resolveLintConfig(
   cwd: string,
   requestedChecks?: Set<LintCheck>,
+  policyOverride?: Policy,
 ): Promise<LintConfig> {
   const config = defaultLintConfig();
   if (requestedChecks) {
     config.checks = new Set(requestedChecks);
   }
 
-  const projectRoot = await findProjectRoot(cwd);
-  if (!projectRoot) {
-    return config;
-  }
-  let policy;
-  try {
-    policy = await loadPolicy(projectRoot);
-  } catch {
-    return config;
+  let policy = policyOverride;
+  if (!policy) {
+    const projectRoot = await findProjectRoot(cwd);
+    if (!projectRoot) {
+      return config;
+    }
+    try {
+      policy = await loadPolicy(projectRoot);
+    } catch {
+      return config;
+    }
   }
 
   const commentRules = policy.rules.filter(
@@ -374,12 +376,16 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
   };
 }
 
-async function runGit(cwd: string, args: string[]): Promise<string> {
+async function runGit(
+  cwd: string,
+  args: string[],
+  timeout = 30_000,
+): Promise<string> {
   try {
     const result = await execFileAsync("git", args, {
       cwd,
       encoding: "utf8",
-      timeout: 30_000,
+      timeout,
       maxBuffer: 50 * 1024 * 1024,
     });
     return result.stdout;
@@ -478,10 +484,13 @@ async function untrackedFileDiffs(repoRoot: string): Promise<FileDiff[]> {
 export type LintCommandOptions = {
   cwd: string;
   base?: string;
+  range?: string;
   staged?: boolean;
   pr?: string;
   patch?: string;
   checks?: string;
+  timeoutMs?: number;
+  policy?: Policy;
 };
 
 async function collectFileDiffs(
@@ -510,18 +519,44 @@ async function collectFileDiffs(
   ).trim();
 
   const diffArgs = ["diff", "--no-color", "--no-ext-diff"];
+  if (options.range !== undefined) {
+    if (
+      options.range.startsWith("-") ||
+      /\s/.test(options.range) ||
+      !options.range.includes("..")
+    ) {
+      throw new Error(
+        `Invalid revision range "${options.range}". Use a value such as origin/main..HEAD.`,
+      );
+    }
+    return parseUnifiedDiff(
+      await runGit(
+        repoRoot,
+        [...diffArgs, options.range],
+        options.timeoutMs,
+      ),
+    );
+  }
   if (options.base) {
     return parseUnifiedDiff(
-      await runGit(repoRoot, [...diffArgs, `${options.base}...HEAD`]),
+      await runGit(
+        repoRoot,
+        [...diffArgs, `${options.base}...HEAD`],
+        options.timeoutMs,
+      ),
     );
   }
   if (options.staged) {
-    return parseUnifiedDiff(await runGit(repoRoot, [...diffArgs, "--cached"]));
+    return parseUnifiedDiff(
+      await runGit(repoRoot, [...diffArgs, "--cached"], options.timeoutMs),
+    );
   }
 
-  const workingDiff = await runGit(repoRoot, [...diffArgs, "HEAD"]).catch(() =>
-    runGit(repoRoot, diffArgs),
-  );
+  const workingDiff = await runGit(
+    repoRoot,
+    [...diffArgs, "HEAD"],
+    options.timeoutMs,
+  ).catch(() => runGit(repoRoot, diffArgs, options.timeoutMs));
   return [...parseUnifiedDiff(workingDiff), ...(await untrackedFileDiffs(repoRoot))];
 }
 
@@ -530,18 +565,25 @@ export async function runLintCommand(
 ): Promise<LintResult> {
   const sources = [
     options.base !== undefined,
+    options.range !== undefined,
     options.staged === true,
     options.pr !== undefined,
     options.patch !== undefined,
   ].filter(Boolean).length;
   if (sources > 1) {
-    throw new Error("Use only one of --base, --staged, --pr, or --patch.");
+    throw new Error(
+      "Use only one of --base, --range, --staged, --pr, or --patch.",
+    );
   }
 
   const requestedChecks =
     options.checks === undefined ? undefined : parseLintChecks(options.checks);
   const files = await collectFileDiffs(options);
-  const config = await resolveLintConfig(options.cwd, requestedChecks);
+  const config = await resolveLintConfig(
+    options.cwd,
+    requestedChecks,
+    options.policy,
+  );
   return runLint(files, config);
 }
 

@@ -11,6 +11,10 @@ import {
 } from "./comment-density.js";
 import type { GithubPrEvidence } from "./github.js";
 import { matchesAny } from "./patterns.js";
+import {
+  isGitPushCommand,
+  type PushLintEvidence,
+} from "./push.js";
 import type { AddedCommentBlock } from "./git.js";
 import type {
   DiffStats,
@@ -80,6 +84,7 @@ function countLabel(
 function evaluatePreTool(
   policy: Policy,
   event: NormalizedHookEvent,
+  pushLintEvidence?: PushLintEvidence,
 ): RuleViolation[] {
   const command = extractCommand(event.toolInput) ?? "";
   const toolIntent = `${event.toolName ?? ""} ${
@@ -88,23 +93,109 @@ function evaluatePreTool(
   const violations: RuleViolation[] = [];
 
   for (const rule of policy.rules) {
-    if (!rule.enabled || rule.mode === "off" || rule.type !== "local-testing") {
+    if (!rule.enabled || rule.mode === "off") {
       continue;
     }
 
-    const looksLikeTest =
-      matchesAny(command, rule.testCommandPatterns) ||
-      /(?:^|[^a-z])tests?(?:[^a-z]|$)/i.test(toolIntent);
-    const looksRemote =
-      matchesAny(command, rule.remoteCommandPatterns) ||
-      matchesAny(event.toolName ?? "", rule.remoteToolPatterns);
-    if (looksLikeTest && looksRemote) {
+    if (rule.type === "local-testing") {
+      const looksLikeTest =
+        matchesAny(command, rule.testCommandPatterns) ||
+        /(?:^|[^a-z])tests?(?:[^a-z]|$)/i.test(toolIntent);
+      const looksRemote =
+        matchesAny(command, rule.remoteCommandPatterns) ||
+        matchesAny(event.toolName ?? "", rule.remoteToolPatterns);
+      if (looksLikeTest && looksRemote) {
+        violations.push(
+          violation(
+            rule,
+            `This test would run remotely through ${event.toolName ?? "an unknown tool"}.`,
+            "Run the test locally instead.",
+          ),
+        );
+      }
+      continue;
+    }
+
+    if (rule.type === "require-clean-push" && isGitPushCommand(command)) {
+      const evidence = pushLintEvidence ?? {
+        status: "unverified" as const,
+        reason: "git-error" as const,
+      };
+      if (evidence.status === "clean") {
+        continue;
+      }
+      if (evidence.status === "findings") {
+        const findings = evidence.findings.filter((finding) =>
+          rule.checks.includes(finding.check),
+        );
+        if (findings.length === 0) {
+          continue;
+        }
+        const examples = findings
+          .slice(0, 3)
+          .map((finding) => {
+            const location = finding.path
+              ? `${finding.path}${finding.line ? `:${finding.line}` : ""}`
+              : "repository";
+            return `${location}: ${finding.message}`;
+          })
+          .join(" ");
+        violations.push(
+          violation(
+            rule,
+            `${countLabel(findings.length, "Codecut lint finding")} remain in the prospective push. ${examples}`,
+            `Run \`codecut lint --range ${evidence.range} --checks ${rule.checks.join(",")}\`, fix every finding, then retry \`git push\`.`,
+          ),
+        );
+        continue;
+      }
+
+      const unverifiedMessage: Record<
+        Extract<PushLintEvidence, { status: "unverified" }>["reason"],
+        { evidence: string; recovery: string }
+      > = {
+        "not-git": {
+          evidence:
+            "Codecut could not inspect this push because the working directory is not a Git repository.",
+          recovery: "Run the push from the intended Git repository.",
+        },
+        "no-head": {
+          evidence:
+            "Codecut could not inspect this push because the repository has no commit at HEAD.",
+          recovery: "Commit the work before pushing.",
+        },
+        "detached-head": {
+          evidence:
+            "Codecut could not inspect this push because HEAD is detached.",
+          recovery: "Check out the intended branch, then retry the push.",
+        },
+        "unsupported-command": {
+          evidence:
+            "Codecut could not map this push command to one local branch.",
+          recovery:
+            "Push the current branch with `git push` or `git push -u <remote> HEAD`.",
+        },
+        "no-base": {
+          evidence:
+            "Codecut could not find a local remote-tracking branch to compare with this push.",
+          recovery:
+            "Fetch the remote branch, run `codecut lint --base <remote>/<branch>`, then retry the push.",
+        },
+        timeout: {
+          evidence: "Codecut timed out while inspecting this push.",
+          recovery:
+            "Run `codecut lint --base <remote>/<branch>` manually, then retry the push.",
+        },
+        "git-error": {
+          evidence:
+            "Codecut could not run the Git diff needed to inspect this push.",
+          recovery:
+            "Run `codecut lint --base <remote>/<branch>` manually and repair the Git state before retrying.",
+        },
+      };
+      const message = unverifiedMessage[evidence.reason];
       violations.push(
-        violation(
-          rule,
-          `This test would run remotely through ${event.toolName ?? "an unknown tool"}.`,
-          "Run the test locally instead.",
-        ),
+        violation(rule, message.evidence, message.recovery, "warn"),
       );
     }
   }
@@ -568,10 +659,15 @@ export function evaluatePolicy(options: {
   addedCommentBlocks?: AddedCommentBlock[];
   addedCommentStats?: AddedCommentStats[];
   githubPrEvidence?: GithubPrEvidence;
+  pushLintEvidence?: PushLintEvidence;
 }): PolicyDecision {
   const violations =
     options.event.stage === "pre-tool"
-      ? evaluatePreTool(options.policy, options.event)
+      ? evaluatePreTool(
+          options.policy,
+          options.event,
+          options.pushLintEvidence,
+        )
       : options.event.stage === "stop"
         ? evaluateStop(
             options.policy,

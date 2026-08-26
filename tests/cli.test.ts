@@ -397,6 +397,140 @@ describe("GitHub PR completion gate", () => {
   });
 });
 
+describe("pre-push lint gate", () => {
+  it("blocks a push with deterministic findings and allows the fixed diff", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-clean-push-"),
+    );
+    const remoteRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-clean-push-remote-"),
+    );
+    temporaryDirectories.push(projectRoot, remoteRoot);
+    await mkdir(path.join(projectRoot, "src"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, "src", "example.ts"),
+      "export const example = true;\n",
+    );
+
+    const git = (args: string[], cwd = projectRoot) =>
+      spawnSync("git", args, { cwd, encoding: "utf8" });
+    expect(
+      git(["init", "--quiet", "--initial-branch", "main"], projectRoot).status,
+    ).toBe(0);
+    expect(git(["init", "--bare", "--quiet"], remoteRoot).status).toBe(0);
+    expect(git(["add", "src/example.ts"]).status).toBe(0);
+    expect(
+      git([
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ]).status,
+    ).toBe(0);
+    expect(git(["remote", "add", "origin", remoteRoot]).status).toBe(0);
+    expect(git(["push", "--quiet", "-u", "origin", "main"]).status).toBe(0);
+
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [
+          {
+            text: "Require clean Codecut lint for git push",
+            source: {
+              path: "AGENTS.md",
+              line: 1,
+              scope: "project",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "cursor",
+        acceptBlockingRules: true,
+      }),
+    );
+    await writeFile(
+      path.join(projectRoot, "src", "example.ts"),
+      'export const example = true;\nconsole.log("debug");\n',
+    );
+    expect(git(["add", ".codecut/policy.json", "src/example.ts"]).status).toBe(0);
+    expect(
+      git([
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "add debug change",
+      ]).status,
+    ).toBe(0);
+
+    const runHook = () =>
+      spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "cursor",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify({
+            hook_event_name: "preToolUse",
+            conversation_id: "clean-push",
+            cwd: projectRoot,
+            tool_name: "Shell",
+            tool_input: { command: "git push" },
+          }),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+
+    const blocked = runHook();
+    expect(blocked.status, blocked.stderr).toBe(0);
+    expect(JSON.parse(blocked.stdout)).toMatchObject({
+      permission: "deny",
+      agent_message: expect.stringContaining("src/example.ts:2"),
+    });
+
+    await writeFile(
+      path.join(projectRoot, "src", "example.ts"),
+      "export const example = true;\n",
+    );
+    expect(git(["add", "src/example.ts"]).status).toBe(0);
+    expect(
+      git([
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "remove debug change",
+      ]).status,
+    ).toBe(0);
+
+    const allowed = runHook();
+    expect(allowed.status, allowed.stderr).toBe(0);
+    expect(JSON.parse(allowed.stdout)).toEqual({ permission: "allow" });
+  });
+});
+
 describe("command state tracking", () => {
   it("links post-tool receipts to their pre-tool working state", async () => {
     const repositoryRoot = process.cwd();

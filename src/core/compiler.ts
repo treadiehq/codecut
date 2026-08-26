@@ -14,11 +14,12 @@ import {
   DEFAULT_VERIFICATION_COMMAND_PATTERNS,
   DEFAULT_WARNING_PATTERNS,
 } from "./patterns.js";
-import type {
-  AgentName,
-  Directive,
-  Policy,
-  PolicyRule,
+import {
+  LINT_CHECKS,
+  type AgentName,
+  type Directive,
+  type Policy,
+  type PolicyRule,
 } from "./schema.js";
 
 const STARTER_DIRECTIVES: Directive[] = [
@@ -176,6 +177,12 @@ function classifyDirective(
     /\b(?:open|create|ensure|must|should|required?|mark|make|keep)\b/.test(
       normalized,
     );
+  const cleanPushRule =
+    /\b(?:git\s+)?push(?:es|ing)?\b/.test(normalized) &&
+    /\b(?:codecut\s+lint|lint|checks?)\b/.test(normalized) &&
+    /\b(?:clean|pass(?:es|ing)?|block|prevent|stop|issues?|findings?)\b/.test(
+      normalized,
+    );
   const commentRule = /\bcomments?\b/.test(normalized);
   const categoryCount = [
     warningRule,
@@ -184,6 +191,7 @@ function classifyDirective(
     blastRadiusRule,
     verificationRule,
     readyGithubPrRule,
+    cleanPushRule,
     commentRule,
   ].filter(Boolean).length;
   if (categoryCount > 1 && hasCompoundStructure(normalized)) {
@@ -225,7 +233,12 @@ function classifyDirective(
             ? {
                 type: "require-ready-github-pr" as const,
               }
-          : undefined;
+            : cleanPushRule
+              ? {
+                  type: "require-clean-push" as const,
+                  checks: [...LINT_CHECKS],
+                }
+              : undefined;
 
   if (blockingRule) {
     return {

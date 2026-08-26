@@ -11,6 +11,7 @@ import {
   decisionReceipt,
   deriveAcknowledgementReceipts,
   deriveReceipts,
+  extractCommand,
 } from "../core/events.js";
 import {
   findGitRoot,
@@ -20,9 +21,14 @@ import {
 } from "../core/git.js";
 import { inspectGithubPullRequest } from "../core/github.js";
 import { eventsPath, findProjectRoot } from "../core/project.js";
+import {
+  inspectOutgoingPush,
+  type PushLintEvidence,
+} from "../core/push.js";
 import type {
   NormalizedHookEvent,
   Policy,
+  PolicyRule,
   Receipt,
 } from "../core/schema.js";
 import type { SupportedAgentName } from "../core/agents.js";
@@ -34,6 +40,7 @@ import {
 } from "../core/user.js";
 import { appendReceipts, readSessionReceipts } from "../core/store.js";
 import { hasProjectHooks } from "../install/user.js";
+import { runLintCommand } from "./lint.js";
 
 /**
  * Has an identical warning (same rule set) already been delivered — and is it
@@ -190,6 +197,68 @@ function matchingStartReceipt(
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
+async function inspectPrePushLint(
+  policy: Policy,
+  event: NormalizedHookEvent,
+  cwd: string,
+): Promise<PushLintEvidence | undefined> {
+  if (event.stage !== "pre-tool") {
+    return undefined;
+  }
+  const rules = policy.rules.filter(
+    (
+      rule,
+    ): rule is Extract<PolicyRule, { type: "require-clean-push" }> =>
+      rule.enabled &&
+      rule.mode !== "off" &&
+      rule.type === "require-clean-push",
+  );
+  if (rules.length === 0) {
+    return undefined;
+  }
+  const command = extractCommand(event.toolInput);
+  if (!command) {
+    return undefined;
+  }
+  const target = await inspectOutgoingPush(command, cwd);
+  if (!target || target.status === "unverified") {
+    return target;
+  }
+
+  const checks = [
+    ...new Set(rules.flatMap((rule) => rule.checks)),
+  ];
+  try {
+    const result = await runLintCommand({
+      cwd: target.cwd,
+      range: target.range,
+      checks: checks.join(","),
+      timeoutMs: 8_000,
+      policy,
+    });
+    const evidence = {
+      branch: target.branch,
+      base: target.base,
+      range: target.range,
+      files: result.files,
+    };
+    return result.findings.length === 0
+      ? { status: "clean", ...evidence }
+      : {
+          status: "findings",
+          ...evidence,
+          findings: result.findings.map((finding) => ({
+            check: finding.check,
+            path: finding.path,
+            line: finding.line,
+            message: finding.message,
+          })),
+        };
+  } catch {
+    return { status: "unverified", reason: "git-error" };
+  }
+}
+
 export async function runHook(
   agent: SupportedAgentName,
   options: { userLevel?: boolean } = {},
@@ -302,7 +371,12 @@ export async function runHook(
           rule.mode !== "off" &&
           rule.type === "require-ready-github-pr",
       );
-    const [diffStats, addedComments, githubPrEvidence] = await Promise.all([
+    const [
+      diffStats,
+      addedComments,
+      githubPrEvidence,
+      pushLintEvidence,
+    ] = await Promise.all([
       event.stage === "stop" || event.stage === "agent-response"
         ? inspectDiff(diffRoot, receipts)
         : undefined,
@@ -310,6 +384,7 @@ export async function runHook(
         ? inspectAddedComments(diffRoot)
         : { blocks: [], stats: [] },
       inspectReadyPr ? inspectGithubPullRequest(diffRoot) : undefined,
+      inspectPrePushLint(policy, event, diffRoot),
     ]);
     const acknowledgements = deriveAcknowledgementReceipts(
       policy,
@@ -331,6 +406,7 @@ export async function runHook(
       addedCommentBlocks: addedComments.blocks,
       addedCommentStats: addedComments.stats,
       githubPrEvidence,
+      pushLintEvidence,
     });
     const warningAlreadySent =
       decision.outcome === "warn" &&

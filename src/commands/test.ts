@@ -1,6 +1,7 @@
 import { evaluatePolicy } from "../core/engine.js";
 import type { GithubPrEvidence } from "../core/github.js";
 import { findProjectRoot } from "../core/project.js";
+import type { PushLintEvidence } from "../core/push.js";
 import {
   loadEffectivePolicy,
   loadUserPolicy,
@@ -75,6 +76,7 @@ function fixtureFor(rule: PolicyRule): {
   receipts: Receipt[];
   diffStats?: DiffStats;
   githubPrEvidence?: GithubPrEvidence;
+  pushLintEvidence?: PushLintEvidence;
 } | undefined {
   switch (rule.type) {
     case "local-testing":
@@ -139,6 +141,30 @@ function fixtureFor(rule: PolicyRule): {
           url: "https://github.com/example/repository/pull/1",
         },
       };
+    case "require-clean-push":
+      return {
+        hookEvent: event("pre-tool", {
+          toolName: "Bash",
+          toolInput: { command: "git push" },
+        }),
+        receipts: [],
+        pushLintEvidence: {
+          status: "findings",
+          branch: "feature/example",
+          base: "refs/remotes/origin/main",
+          range:
+            "0123456789abcdef0123456789abcdef01234567..fedcba9876543210fedcba9876543210fedcba98",
+          files: 1,
+          findings: [
+            {
+              check: rule.checks[0] ?? "comment-quality",
+              path: "src/example.ts",
+              line: 1,
+              message: "Sample finding.",
+            },
+          ],
+        },
+      };
     case "meta-compliance":
     case "advisory":
       return undefined;
@@ -162,6 +188,7 @@ function testRule(policy: Policy, rule: PolicyRule): TestResult {
     receipts: fixture.receipts,
     diffStats: fixture.diffStats,
     githubPrEvidence: fixture.githubPrEvidence,
+    pushLintEvidence: fixture.pushLintEvidence,
   });
   const detected = decision.violations.some(
     (violation) => violation.ruleId === rule.id,

@@ -15,6 +15,7 @@ import {
   scanComments,
   stripNonExecutableText,
 } from "../src/core/comments.js";
+import { compilePolicy } from "../src/core/compiler.js";
 import { diffTotals, parseUnifiedDiff } from "../src/core/diff.js";
 
 const SAMPLE_DIFF = [
@@ -910,6 +911,28 @@ describe("lint configuration", () => {
     expect(config.maxCommentLines).toBe(2);
     expect(config.bannedPatterns).toEqual(["agent context", "prompt"]);
   });
+
+  it("accepts an effective policy supplied by hook enforcement", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "codecut-lint-"));
+    const effectivePolicy = compilePolicy({
+      directives: [
+        {
+          text: "Keep comment lines below 10% of added source lines",
+          source: { path: "AGENTS.md", scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+
+    const config = await resolveLintConfig(
+      directory,
+      undefined,
+      effectivePolicy,
+    );
+    expect(config.maxCommentPercentage).toBe(10);
+  });
 });
 
 describe("lint command", () => {
@@ -932,7 +955,13 @@ describe("lint command", () => {
 
   it("rejects conflicting diff sources", async () => {
     await expect(
-      runLintCommand({ cwd: ".", staged: true, pr: "1" }),
+      runLintCommand({ cwd: ".", range: "main..HEAD", staged: true }),
     ).rejects.toThrow("only one of");
+  });
+
+  it("rejects option-like revision ranges", async () => {
+    await expect(
+      runLintCommand({ cwd: ".", range: "--stat..HEAD" }),
+    ).rejects.toThrow("Invalid revision range");
   });
 });

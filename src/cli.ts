@@ -369,6 +369,10 @@ program
   )
   .option("--cwd <directory>", "project directory", process.cwd())
   .option("--base <ref>", "compare HEAD against the merge base with <ref>")
+  .option(
+    "--range <revisions>",
+    "scan a Git revision range (for example origin/main..HEAD)",
+  )
   .option("--staged", "scan staged changes only", false)
   .option("--pr <number>", "scan a GitHub pull request (requires gh)")
   .option("--patch <file>", "scan a unified diff file; use - for stdin")
@@ -385,6 +389,7 @@ Examples:
   codecut lint                       uncommitted changes
   codecut lint --staged              staged changes
   codecut lint --base origin/main    a pull request branch
+  codecut lint --range origin/main..HEAD
   codecut lint --pr 123              a GitHub pull request
   git diff main...HEAD | codecut lint --patch -
 `,
@@ -393,6 +398,7 @@ Examples:
     async (options: {
       cwd: string;
       base?: string;
+      range?: string;
       staged: boolean;
       pr?: string;
       patch?: string;
@@ -403,6 +409,7 @@ Examples:
       const result = await runLintCommand({
         cwd: options.cwd,
         base: options.base,
+        range: options.range,
         staged: options.staged,
         pr: options.pr,
         patch: options.patch,
