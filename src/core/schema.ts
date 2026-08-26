@@ -1,14 +1,13 @@
 import { z } from "zod";
+import { SUPPORTED_AGENT_NAMES } from "./agents.js";
 import { compilePattern } from "./patterns.js";
 
 export const agentNameSchema = z.enum([
-  "claude",
-  "cursor",
-  "codex",
-  "polytoken",
+  ...SUPPORTED_AGENT_NAMES,
   "unknown",
 ]);
 export type AgentName = z.infer<typeof agentNameSchema>;
+export type { SupportedAgentName } from "./agents.js";
 
 export const directiveSourceSchema = z.object({
   path: z.string().min(1),
@@ -81,6 +80,8 @@ const commentQualityRuleSchema = z.object({
   filePatterns: z.array(regexPatternSchema).min(1),
   bannedPatterns: z.array(regexPatternSchema).min(1),
   maxCommentLines: z.number().int().positive().optional(),
+  maxCommentPercentage: z.number().min(0).max(100).optional(),
+  minAddedLinesForCommentPercentage: z.number().int().positive().default(20),
 });
 
 const metaComplianceRuleSchema = z.object({

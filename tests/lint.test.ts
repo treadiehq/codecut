@@ -11,6 +11,7 @@ import {
   runLintCommand,
 } from "../src/commands/lint.js";
 import {
+  scanCommentLines,
   scanComments,
   stripNonExecutableText,
 } from "../src/core/comments.js";
@@ -135,6 +136,26 @@ describe("comment scanning", () => {
       { line: 3, text: "third" },
       { line: 5, text: "fourth" },
     ]);
+  });
+
+  it("counts comment delimiters and inline comments as changed lines", () => {
+    const comments = scanCommentLines(
+      [
+        { line: 1, text: "/**" },
+        { line: 2, text: " * Lasting constraint." },
+        { line: 3, text: " */" },
+        { line: 4, text: "const value = 1; // Inline rationale." },
+        { line: 5, text: "const pattern = /\\/\\//;" },
+        { line: 6, text: "#private = 1;" },
+      ],
+      {
+        hashComments: "never",
+        dashComments: false,
+        regexLiterals: true,
+      },
+    );
+
+    expect(comments.map((comment) => comment.line)).toEqual([1, 2, 3, 4]);
   });
 
   it("preserves block markers inside standalone line comments", () => {
@@ -281,6 +302,58 @@ describe("lint checks", () => {
     expect(lintComment("encrypts with AES-256 when available")).toEqual([]);
     expect(lintComment("timestamps follow ISO-8601")).toEqual([]);
     expect(lintComment("defined in RFC-4648")).toEqual([]);
+  });
+
+  it("warns on aggregate comment density after the minimum sample size", () => {
+    const filePatch = (filePath: string, commentLines: number, codeLines: number) =>
+      [
+        `diff --git a/${filePath} b/${filePath}`,
+        "new file mode 100644",
+        "--- /dev/null",
+        `+++ b/${filePath}`,
+        `@@ -0,0 +1,${commentLines + codeLines} @@`,
+        ...Array.from(
+          { length: commentLines },
+          (_, index) => `+// Lasting constraint ${index + 1}.`,
+        ),
+        ...Array.from(
+          { length: codeLines },
+          (_, index) => `+export const value${index + 1} = ${index + 1};`,
+        ),
+      ].join("\n");
+    const files = parseUnifiedDiff(
+      [
+        filePatch("src/first.ts", 5, 10),
+        filePatch("src/second.ts", 5, 10),
+        filePatch("README.md", 30, 0),
+        "",
+      ].join("\n"),
+    );
+
+    const result = runLint(files, defaultLintConfig());
+    const densityFinding = result.findings.find(
+      (finding) =>
+        finding.check === "comment-quality" &&
+        finding.path === undefined,
+    );
+
+    expect(densityFinding?.message).toBe(
+      "New comments make up 33.3% of added source lines (10 of 30; limit 25%).",
+    );
+    expect(densityFinding?.recovery).toContain(
+      "keep only lasting code constraints",
+    );
+
+    const smallDiff = parseUnifiedDiff(
+      `${filePatch("src/small.ts", 6, 4)}\n`,
+    );
+    expect(
+      runLint(smallDiff, defaultLintConfig()).findings.filter(
+        (finding) =>
+          finding.check === "comment-quality" &&
+          finding.path === undefined,
+      ),
+    ).toEqual([]);
   });
 
   it("flags task markers case-sensitively", () => {
@@ -742,6 +815,8 @@ describe("lint configuration", () => {
 
     expect([...config.checks]).toHaveLength(4);
     expect(config.maxFiles).toBe(12);
+    expect(config.maxCommentPercentage).toBe(25);
+    expect(config.minAddedLinesForCommentPercentage).toBe(20);
   });
 
   it("honors policy thresholds and explicit opt-outs", async () => {
@@ -789,6 +864,51 @@ describe("lint configuration", () => {
       parseLintChecks("comment-quality"),
     );
     expect(explicit.checks.has("comment-quality")).toBe(true);
+  });
+
+  it("honors policy comment-density thresholds", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "codecut-lint-"));
+    await mkdir(path.join(directory, ".codecut"), { recursive: true });
+    await writeFile(
+      path.join(directory, ".codecut", "policy.json"),
+      JSON.stringify({
+        version: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        agents: ["claude"],
+        sources: ["AGENTS.md"],
+        rules: [
+          {
+            id: "comment-context",
+            type: "comment-quality",
+            directive: "Keep agent context out of comments",
+            source: { path: "AGENTS.md" },
+            mode: "warn",
+            filePatterns: ["\\.ts$"],
+            bannedPatterns: ["agent context"],
+            maxCommentLines: 2,
+          },
+          {
+            id: "comment-density",
+            type: "comment-quality",
+            directive: "Keep comments below 10%",
+            source: { path: "AGENTS.md" },
+            mode: "warn",
+            filePatterns: ["\\.ts$"],
+            bannedPatterns: ["prompt"],
+            maxCommentPercentage: 10,
+            minAddedLinesForCommentPercentage: 40,
+          },
+        ],
+      }),
+      "utf8",
+    );
+
+    const config = await resolveLintConfig(directory);
+    expect(config.maxCommentPercentage).toBe(10);
+    expect(config.minAddedLinesForCommentPercentage).toBe(40);
+    expect(config.maxCommentLines).toBe(2);
+    expect(config.bannedPatterns).toEqual(["agent context", "prompt"]);
   });
 });
 

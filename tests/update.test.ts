@@ -16,6 +16,8 @@ import {
   releaseAssetName,
   updateCodecut,
 } from "../src/commands/update.js";
+import { installDevinHooks } from "../src/install/devin.js";
+import { installOpenCodeHooks } from "../src/install/opencode.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -193,6 +195,8 @@ describe("self updates", () => {
     await chmod(executable, 0o755);
     await mkdir(path.join(directory, ".codecut"), { recursive: true });
     await writeFile(path.join(directory, ".codecut", "policy.json"), "{}");
+    await installDevinHooks(directory);
+    await installOpenCodeHooks(directory);
 
     const result = await updateCodecut({
       currentVersion: "0.2.0",
@@ -207,5 +211,7 @@ describe("self updates", () => {
     expect(
       await readFile(path.join(directory, ".codecut", "runtime", "codecut"), "utf8"),
     ).toBe(currentBinary);
+    expect(result.refreshedAgents).toContain("devin");
+    expect(result.refreshedAgents).toContain("opencode");
   });
 });

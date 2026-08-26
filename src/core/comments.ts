@@ -43,6 +43,12 @@ export type HashCommentMode =
   | "whitespace"
   | "never";
 
+export type CommentScanOptions = {
+  hashComments?: HashCommentMode;
+  dashComments?: boolean;
+  regexLiterals?: boolean;
+};
+
 function canStartRegexLiteral(code: string): boolean {
   const before = code.trimEnd();
   if (before.length === 0) {
@@ -68,15 +74,12 @@ function canStartRegexLiteral(code: string): boolean {
  * Scanner state carries across contiguous added lines, but resets across diff
  * gaps where unseen source may have closed an open construct.
  */
-export function stripNonExecutableText(
+function analyzeSourceLines(
   lines: CommentLine[],
-  options: {
-    hashComments?: HashCommentMode;
-    dashComments?: boolean;
-    regexLiterals?: boolean;
-  } = {},
-): CommentLine[] {
+  options: CommentScanOptions = {},
+): { codeLines: CommentLine[]; commentLines: CommentLine[] } {
   const codeLines: CommentLine[] = [];
+  const commentLines: CommentLine[] = [];
   const hashComments = options.hashComments ?? "whitespace";
   const dashComments = options.dashComments ?? true;
   const regexLiterals = options.regexLiterals ?? true;
@@ -98,6 +101,7 @@ export function stripNonExecutableText(
     }
 
     let code = "";
+    let hasComment = inBlockComment && text.trim().length > 0;
 
     for (let index = 0; index < text.length; index += 1) {
       const current = text[index];
@@ -167,11 +171,13 @@ export function stripNonExecutableText(
         continue;
       }
       if (current === "/" && next === "*") {
+        hasComment = true;
         inBlockComment = true;
         index += 1;
         continue;
       }
       if (current === "/" && next === "/") {
+        hasComment = true;
         break;
       }
       if (
@@ -195,6 +201,7 @@ export function stripNonExecutableText(
           (hashComments === "whitespace" &&
             (index === 0 || /\s/.test(text[index - 1] ?? "")));
         if (startsHashComment) {
+          hasComment = !(next === "!" && index === 0);
           break;
         }
       }
@@ -204,6 +211,7 @@ export function stripNonExecutableText(
         next === "-" &&
         (text[index + 2] === undefined || /\s/.test(text[index + 2] ?? ""))
       ) {
+        hasComment = true;
         break;
       }
       if (context.kind === "template-expression") {
@@ -226,9 +234,31 @@ export function stripNonExecutableText(
       contexts.pop();
     }
     codeLines.push({ line, text: code });
+    if (hasComment && text.trim().length > 0) {
+      commentLines.push({ line, text });
+    }
   }
 
-  return codeLines;
+  return { codeLines, commentLines };
+}
+
+export function stripNonExecutableText(
+  lines: CommentLine[],
+  options: CommentScanOptions = {},
+): CommentLine[] {
+  return analyzeSourceLines(lines, options).codeLines;
+}
+
+/**
+ * Return each non-blank source line that contains comment syntax. Unlike
+ * scanComments, this includes delimiters and inline comments because density
+ * is based on changed lines rather than extracted human text.
+ */
+export function scanCommentLines(
+  lines: CommentLine[],
+  options: CommentScanOptions = {},
+): CommentLine[] {
+  return analyzeSourceLines(lines, options).commentLines;
 }
 
 /**

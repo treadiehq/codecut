@@ -6,6 +6,8 @@ const ROOT_INSTRUCTION_FILES = [
   "CLAUDE.md",
   path.join(".claude", "CLAUDE.md"),
   "AGENTS.md",
+  "AGENT.md",
+  path.join(".devin", "global_rules.md"),
 ];
 
 const DIRECTIVE_LANGUAGE =
@@ -15,6 +17,7 @@ const CONDITIONAL_SCOPE_LANGUAGE =
 const SKIPPED_DIRECTORIES = new Set([
   ".git",
   ".codecut",
+  ".devin",
   ".papercut",
   "coverage",
   "dist",
@@ -54,6 +57,29 @@ async function cursorRuleFiles(cwd: string): Promise<string[]> {
   return found;
 }
 
+async function devinRuleFiles(cwd: string): Promise<string[]> {
+  const rulesDirectory = path.join(cwd, ".devin", "rules");
+  if (!(await exists(rulesDirectory))) {
+    return [];
+  }
+
+  const found: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const absolutePath = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await visit(absolutePath);
+      } else if (/\.md$/i.test(entry.name)) {
+        found.push(absolutePath);
+      }
+    }
+  };
+
+  await visit(rulesDirectory);
+  return found;
+}
+
 async function nestedInstructionFiles(cwd: string): Promise<string[]> {
   const found: string[] = [];
   const visit = async (directory: string): Promise<void> => {
@@ -68,7 +94,9 @@ async function nestedInstructionFiles(cwd: string): Promise<string[]> {
           await visit(absolutePath);
         }
       } else if (
-        (entry.name === "CLAUDE.md" || entry.name === "AGENTS.md") &&
+        (entry.name === "CLAUDE.md" ||
+          entry.name === "AGENTS.md" ||
+          entry.name === "AGENT.md") &&
         directory !== cwd
       ) {
         found.push(absolutePath);
@@ -94,6 +122,7 @@ export async function discoverInstructionFiles(cwd: string): Promise<string[]> {
       ...existingRootFiles,
       ...(await nestedInstructionFiles(cwd)),
       ...(await cursorRuleFiles(cwd)),
+      ...(await devinRuleFiles(cwd)),
     ]),
   ].sort();
 }
@@ -233,13 +262,19 @@ export async function discoverDirectives(cwd: string): Promise<{
     const cursorRule = relativePath.startsWith(
       `${path.join(".cursor", "rules")}${path.sep}`,
     );
+    const devinRule = relativePath.startsWith(
+      `${path.join(".devin", "rules")}${path.sep}`,
+    );
     const nestedInstruction =
-      !cursorRule && !ROOT_INSTRUCTION_FILES.includes(relativePath);
+      !cursorRule && !devinRule && !ROOT_INSTRUCTION_FILES.includes(relativePath);
     const explicitlyAlwaysApplied = /^\s*alwaysApply\s*:\s*true\s*$/im.test(
       frontmatter,
     );
+    const devinAlwaysOn = /^\s*trigger\s*:\s*always_on\s*$/im.test(frontmatter);
     const conditional =
-      nestedInstruction || (cursorRule && !explicitlyAlwaysApplied);
+      nestedInstruction ||
+      (cursorRule && !explicitlyAlwaysApplied) ||
+      (devinRule && !devinAlwaysOn);
 
     directives.push(
       ...parseDirectives(

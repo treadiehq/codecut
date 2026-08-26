@@ -9,6 +9,15 @@ import {
   stripNonExecutableText,
   type HashCommentMode,
 } from "../core/comments.js";
+import {
+  aggregateCommentStats,
+  DEFAULT_MAX_COMMENT_PERCENTAGE,
+  DEFAULT_MIN_ADDED_LINES_FOR_COMMENT_PERCENTAGE,
+  exceedsCommentPercentage,
+  formatCommentPercentage,
+  measureAddedComments,
+  type AddedCommentStats,
+} from "../core/comment-density.js";
 import { diffTotals, parseUnifiedDiff, type FileDiff } from "../core/diff.js";
 import {
   DEFAULT_CODE_FILE_PATTERNS,
@@ -36,8 +45,9 @@ export type LintCheck = (typeof LINT_CHECKS)[number];
 const CHECK_INFO: Record<LintCheck, { summary: string; recovery: string }> = {
   "comment-quality": {
     summary:
-      "New comments should not reference prompts, agent instructions, tickets, or temporary files.",
-    recovery: "Remove the comment or keep only lasting code constraints.",
+      "New comments should stay focused on lasting code constraints.",
+    recovery:
+      "Remove comments that narrate history or process or restate the code; keep only lasting code constraints.",
   },
   "todo-comments": {
     summary: "New comments should not leave unresolved task markers.",
@@ -77,6 +87,8 @@ export type LintConfig = {
   filePatterns: string[];
   bannedPatterns: string[];
   maxCommentLines?: number;
+  maxCommentPercentage?: number;
+  minAddedLinesForCommentPercentage: number;
   todoPatterns: string[];
   debugPatterns: string[];
   testFilePatterns: string[];
@@ -89,6 +101,9 @@ export function defaultLintConfig(): LintConfig {
     checks: new Set(LINT_CHECKS),
     filePatterns: DEFAULT_CODE_FILE_PATTERNS,
     bannedPatterns: DEFAULT_COMMENT_CONTEXT_PATTERNS,
+    maxCommentPercentage: DEFAULT_MAX_COMMENT_PERCENTAGE,
+    minAddedLinesForCommentPercentage:
+      DEFAULT_MIN_ADDED_LINES_FOR_COMMENT_PERCENTAGE,
     todoPatterns: DEFAULT_TODO_PATTERNS,
     debugPatterns: DEFAULT_DEBUG_ARTIFACT_PATTERNS,
     testFilePatterns: DEFAULT_TEST_FILE_PATTERNS,
@@ -144,18 +159,39 @@ export async function resolveLintConfig(
     return config;
   }
 
-  const commentRule = policy.rules.find(
+  const commentRules = policy.rules.filter(
     (rule) => rule.type === "comment-quality",
   );
-  if (commentRule && commentRule.type === "comment-quality") {
-    if (!commentRule.enabled || commentRule.mode === "off") {
+  if (commentRules.length > 0) {
+    const activeCommentRules = commentRules.filter(
+      (rule) => rule.enabled && rule.mode !== "off",
+    );
+    if (activeCommentRules.length === 0) {
       if (!requestedChecks) {
         config.checks.delete("comment-quality");
       }
     } else {
-      config.filePatterns = commentRule.filePatterns;
-      config.bannedPatterns = commentRule.bannedPatterns;
-      config.maxCommentLines = commentRule.maxCommentLines;
+      config.filePatterns = [
+        ...new Set(activeCommentRules.flatMap((rule) => rule.filePatterns)),
+      ];
+      config.bannedPatterns = [
+        ...new Set(activeCommentRules.flatMap((rule) => rule.bannedPatterns)),
+      ];
+      const lineLimits = activeCommentRules.flatMap((rule) =>
+        rule.maxCommentLines === undefined ? [] : [rule.maxCommentLines],
+      );
+      config.maxCommentLines =
+        lineLimits.length === 0 ? undefined : Math.min(...lineLimits);
+      const densityRule = activeCommentRules
+        .filter((rule) => rule.maxCommentPercentage !== undefined)
+        .sort(
+          (left, right) =>
+            left.maxCommentPercentage! - right.maxCommentPercentage!,
+        )[0];
+      config.maxCommentPercentage = densityRule?.maxCommentPercentage;
+      config.minAddedLinesForCommentPercentage =
+        densityRule?.minAddedLinesForCommentPercentage ??
+        DEFAULT_MIN_ADDED_LINES_FOR_COMMENT_PERCENTAGE;
     }
   }
 
@@ -201,6 +237,7 @@ function countLabel(count: number, singular: string): string {
 
 export function runLint(files: FileDiff[], config: LintConfig): LintResult {
   const findings: LintFinding[] = [];
+  const addedCommentStats: AddedCommentStats[] = [];
 
   for (const file of files) {
     if (file.binary || !matchesAny(file.path, config.filePatterns)) {
@@ -212,6 +249,11 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
       config.checks.has("todo-comments")
     ) {
       const fileComments = scanComments(file.addedLines);
+      if (config.checks.has("comment-quality")) {
+        addedCommentStats.push(
+          measureAddedComments(file.path, file.addedLines),
+        );
+      }
       if (
         config.checks.has("comment-quality") &&
         config.maxCommentLines !== undefined
@@ -287,6 +329,22 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
         }
       }
     }
+  }
+
+  const commentDensity = aggregateCommentStats(addedCommentStats);
+  if (
+    config.checks.has("comment-quality") &&
+    exceedsCommentPercentage(
+      commentDensity,
+      config.maxCommentPercentage,
+      config.minAddedLinesForCommentPercentage,
+    )
+  ) {
+    findings.push({
+      check: "comment-quality",
+      message: `New comments make up ${formatCommentPercentage(commentDensity)} of added source lines (${commentDensity.commentLines} of ${commentDensity.sourceLines}; limit ${config.maxCommentPercentage}%).`,
+      recovery: CHECK_INFO["comment-quality"].recovery,
+    });
   }
 
   findings.sort((left, right) => {

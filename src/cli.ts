@@ -16,9 +16,13 @@ import {
 import { formatPolicyTests, testPolicy } from "./commands/test.js";
 import { compareVersions, updateCodecut } from "./commands/update.js";
 import { setupUserRules } from "./commands/user.js";
+import {
+  isSupportedAgentName,
+  supportedAgentNames,
+  type SupportedAgentName,
+} from "./core/agents.js";
 import { displayPath } from "./core/user.js";
 import { installUserHooks } from "./install/user.js";
-import { agentNameSchema, type AgentName } from "./core/schema.js";
 
 declare const __CODECUT_VERSION__: string | undefined;
 
@@ -38,14 +42,14 @@ function runtimeSourcePath(): string {
   return path.resolve(process.argv[1] ?? process.execPath);
 }
 
-function agent(value: string): AgentName {
-  const parsed = agentNameSchema.safeParse(value.toLowerCase());
-  if (!parsed.success || parsed.data === "unknown") {
+function agent(value: string): SupportedAgentName {
+  const normalized = value.toLowerCase();
+  if (!isSupportedAgentName(normalized)) {
     throw new Error(
-      `Unsupported agent "${value}". Use "claude", "cursor", "codex", or "polytoken".`,
+      `Unsupported agent "${value}". Use ${supportedAgentNames()}.`,
     );
   }
-  return parsed.data;
+  return normalized;
 }
 
 async function setupUser(
@@ -53,7 +57,7 @@ async function setupUser(
     accept: boolean;
     refreshPolicy: boolean;
   },
-  hookAgent?: AgentName,
+  hookAgent?: SupportedAgentName,
 ): Promise<void> {
   const result = await setupUserRules({
     accept: options.accept,
@@ -62,9 +66,7 @@ async function setupUser(
 
   let hooksLine: string | undefined;
   if (hookAgent) {
-    const hooks = await installUserHooks(
-      hookAgent as Exclude<AgentName, "unknown">,
-    );
+    const hooks = await installUserHooks(hookAgent);
     const health = await inspectHookSettings(os.homedir(), hookAgent, {
       userLevel: true,
     });
@@ -198,7 +200,7 @@ program
   .description("Install user-level checks or configure Codecut in a project")
   .option(
     "--agent <agent>",
-    "agent to configure: claude, cursor, codex, or polytoken",
+    `agent to configure: ${supportedAgentNames()}`,
     "claude",
   )
   .option("--cwd <directory>", "project directory", process.cwd())
@@ -225,6 +227,8 @@ Examples:
   codecut setup --agent claude
   codecut setup --agent cursor
   codecut setup --agent codex
+  codecut setup --agent devin
+  codecut setup --agent opencode
   codecut setup --agent polytoken
   codecut setup --agent claude --accept
   codecut setup --user
@@ -243,7 +247,7 @@ program
   .description("Create a policy and install agent hooks")
   .option(
     "--agent <agent>",
-    "agent to configure: claude, cursor, codex, or polytoken",
+    `agent to configure: ${supportedAgentNames()}`,
     "claude",
   )
   .option("--cwd <directory>", "project directory", process.cwd())
@@ -258,6 +262,8 @@ program
     `
 Examples:
   codecut init --agent claude
+  codecut init --agent devin
+  codecut init --agent opencode
   codecut init --agent claude --accept
   codecut init --cwd ./my-project --agent claude
 `,
@@ -309,7 +315,7 @@ program
   .description("Show policy rules and hook health")
   .option(
     "--agent <agent>",
-    "agent to check: claude, cursor, codex, or polytoken",
+    `agent to check: ${supportedAgentNames()}`,
     "claude",
   )
   .option("--cwd <directory>", "project directory", process.cwd())

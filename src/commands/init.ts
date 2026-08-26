@@ -9,23 +9,16 @@ import {
   policyPath,
   writePolicy,
 } from "../core/project.js";
-import type { AgentName, Policy } from "../core/schema.js";
 import {
-  installClaudeHooks,
-  validateClaudeSettings,
-} from "../install/claude.js";
+  isSupportedAgentName,
+  supportedAgentNames,
+  type SupportedAgentName,
+} from "../core/agents.js";
+import type { Policy } from "../core/schema.js";
 import {
-  installCursorHooks,
-  validateCursorSettings,
-} from "../install/cursor.js";
-import {
-  installCodexHooks,
-  validateCodexSettings,
-} from "../install/codex.js";
-import {
-  installPolytokenHooks,
-  validatePolytokenSettings,
-} from "../install/polytoken.js";
+  installProjectHooks,
+  validateAgentSettings,
+} from "../install/registry.js";
 import { installRuntime } from "../install/runtime.js";
 
 export type InitResult = {
@@ -44,28 +37,20 @@ export type InitResult = {
 
 export async function initializeProject(options: {
   cwd: string;
-  agent: AgentName;
+  agent: SupportedAgentName;
   accept: boolean;
   force: boolean;
   runtimeSourcePath?: string;
 }): Promise<InitResult> {
-  if (!["claude", "cursor", "codex", "polytoken"].includes(options.agent)) {
+  if (!isSupportedAgentName(options.agent)) {
     throw new Error(
-      `Unsupported agent "${options.agent}". Use "claude", "cursor", "codex", or "polytoken".`,
+      `Unsupported agent "${options.agent}". Use ${supportedAgentNames()}.`,
     );
   }
 
   const projectRoot = path.resolve(options.cwd);
   await migrateLegacyProjectDirectory(projectRoot);
-  if (options.agent === "cursor") {
-    await validateCursorSettings(projectRoot);
-  } else if (options.agent === "codex") {
-    await validateCodexSettings(projectRoot);
-  } else if (options.agent === "polytoken") {
-    await validatePolytokenSettings(projectRoot);
-  } else {
-    await validateClaudeSettings(projectRoot);
-  }
+  await validateAgentSettings(projectRoot, options.agent);
   let policyCreated = false;
   let policyUpdated = false;
   let policy: Policy;
@@ -109,14 +94,7 @@ export async function initializeProject(options: {
     ? await installRuntime(projectRoot, options.runtimeSourcePath)
     : undefined;
   await ensureLocalLogIgnored(projectRoot);
-  const hooks =
-    options.agent === "cursor"
-      ? await installCursorHooks(projectRoot)
-      : options.agent === "codex"
-        ? await installCodexHooks(projectRoot)
-        : options.agent === "polytoken"
-          ? await installPolytokenHooks(projectRoot)
-        : await installClaudeHooks(projectRoot);
+  const hooks = await installProjectHooks(projectRoot, options.agent);
 
   return {
     projectRoot,
@@ -131,6 +109,6 @@ export async function initializeProject(options: {
     runtimePath: runtime?.runtimePath,
     runtimeUpdated: runtime?.updated ?? false,
     hookSettingsPath: hooks.settingsPath,
-    addedHookEvents: hooks.addedEvents,
+    addedHookEvents: [...hooks.addedEvents],
   };
 }

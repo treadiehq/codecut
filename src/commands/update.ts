@@ -10,13 +10,14 @@ import {
   rm,
 } from "node:fs/promises";
 import path from "node:path";
+import { SUPPORTED_AGENT_NAMES } from "../core/agents.js";
 import {
   findProjectRoot,
 } from "../core/project.js";
-import { installClaudeHooks } from "../install/claude.js";
-import { installCodexHooks } from "../install/codex.js";
-import { installCursorHooks } from "../install/cursor.js";
-import { installPolytokenHooks } from "../install/polytoken.js";
+import {
+  installProjectHooks,
+  projectHookSettingsPath,
+} from "../install/registry.js";
 import { installRuntime } from "../install/runtime.js";
 
 type Fetch = typeof globalThis.fetch;
@@ -187,38 +188,16 @@ async function refreshProject(
   const agents: string[] = [];
   const warnings: string[] = [];
   await installRuntime(projectRoot, binaryPath);
-  const installers = [
-    {
-      agent: "claude",
-      settings: path.join(projectRoot, ".claude", "settings.json"),
-      install: installClaudeHooks,
-    },
-    {
-      agent: "cursor",
-      settings: path.join(projectRoot, ".cursor", "hooks.json"),
-      install: installCursorHooks,
-    },
-    {
-      agent: "codex",
-      settings: path.join(projectRoot, ".codex", "hooks.json"),
-      install: installCodexHooks,
-    },
-    {
-      agent: "polytoken",
-      settings: path.join(projectRoot, ".polytoken", "hooks.json"),
-      install: installPolytokenHooks,
-    },
-  ];
-  for (const installer of installers) {
-    if (!(await fileExists(installer.settings))) {
+  for (const agent of SUPPORTED_AGENT_NAMES) {
+    if (!(await fileExists(projectHookSettingsPath(projectRoot, agent)))) {
       continue;
     }
     try {
-      await installer.install(projectRoot);
-      agents.push(installer.agent);
+      await installProjectHooks(projectRoot, agent);
+      agents.push(agent);
     } catch (error) {
       warnings.push(
-        `${installer.agent} hooks were not refreshed: ${
+        `${agent} hooks were not refreshed: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );

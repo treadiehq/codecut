@@ -1,6 +1,6 @@
 {
   "name": "codecut",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Check coding agents against project rules and explain failures",
   "type": "module",
@@ -12,6 +12,8 @@
     "smoke": "pnpm build && node scripts/smoke-test.mjs",
     "smoke:codex": "pnpm build && node scripts/codex-smoke-test.mjs",
     "smoke:cursor": "pnpm build && node scripts/cursor-smoke-test.mjs",
+    "smoke:devin": "pnpm build && node scripts/devin-smoke-test.mjs",
+    "smoke:opencode": "pnpm build && node scripts/opencode-smoke-test.mjs",
     "smoke:polytoken": "pnpm build && node scripts/polytoken-smoke-test.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,9 +24,12 @@
     "claude-code",
     "codex",
     "cursor",
+    "devin",
     "hooks",
+    "opencode",
     "polytoken",
-    "policy-as-code"
+    "policy-as-code",
+    "t3code"
   ],
   "author": "",
   "license": "FSL-1.1-MIT",

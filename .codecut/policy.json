@@ -6,6 +6,8 @@
     "claude",
     "cursor",
     "codex",
+    "devin",
+    "opencode",
     "polytoken"
   ],
   "sources": [
@@ -147,8 +149,8 @@
       ]
     },
     {
-      "id": "comment-quality-2a135f1f",
-      "directive": "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
+      "id": "comment-quality-cb2544b6",
+      "directive": "Keep prompts, agent instructions, tickets, and temporary files out of code comments; preserve comments for lasting constraints and keep comment lines below 25% of added source lines",
       "source": {
         "path": "starter policy",
         "scope": "generated",
@@ -169,7 +171,9 @@
         "\\b[A-Z][A-Z0-9]{1,9}-\\d+\\b",
         "(?:\\.cursor/(?:plans|rules)|/tmp/|temporary\\s+spec|ephemeral\\s+spec)",
         "\\b(?:as\\s+requested|per\\s+(?:the\\s+)?(?:prompt|instructions?)|the\\s+agent|I\\s+(?:added|changed|implemented))\\b"
-      ]
+      ],
+      "minAddedLinesForCommentPercentage": 20,
+      "maxCommentPercentage": 25
     }
   ]
 }

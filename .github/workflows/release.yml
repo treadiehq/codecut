@@ -31,6 +31,8 @@ jobs:
           pnpm smoke
           pnpm smoke:cursor
           pnpm smoke:codex
+          pnpm smoke:devin
+          pnpm smoke:opencode
           pnpm smoke:polytoken
 
   build:

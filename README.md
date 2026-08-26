@@ -12,6 +12,7 @@ Codecut explains what happened and how to fix it.
 - Warnings in test, lint, typecheck, or build output
 - Temporary agent context left in code comments
 - Code comments longer than a limit you set ("no comments longer than one line")
+- Comment-heavy changes above a percentage you set ("keep comment lines below 25% of added source lines")
 - Large changes that need an explanation
 
 Codecut only blocks behavior it can check reliably. Everything else stays
@@ -48,6 +49,8 @@ For a different agent, select it explicitly:
 ```sh
 codecut setup --user --agent cursor
 codecut setup --user --agent codex
+codecut setup --user --agent devin
+codecut setup --user --agent opencode
 codecut setup --user --agent polytoken
 ```
 
@@ -58,6 +61,8 @@ To keep Codecut setup inside the current project, pass `--agent` without
 codecut setup --agent claude
 codecut setup --agent cursor
 codecut setup --agent codex
+codecut setup --agent devin
+codecut setup --agent opencode
 codecut setup --agent polytoken
 ```
 
@@ -69,13 +74,24 @@ Codex loads project hooks after you trust the project in Codex.
 ## Change the rules
 
 Edit the instruction files you already use, such as `AGENTS.md`, `CLAUDE.md`,
-or `.cursor/rules`. Then refresh Codecut:
+`.cursor/rules`, or `.devin/rules`. Then refresh Codecut:
 
 ```sh
 codecut setup --agent cursor --refresh-policy --accept
 ```
 
 You can also edit `.codecut/policy.json` directly.
+
+For example, add this to an instruction file to set a stricter comment budget:
+
+```md
+- Keep comment lines below 15% of added source lines
+```
+
+Codecut checks comment density after at least 20 non-blank source lines have
+been added, which avoids noisy warnings on small edits. Density warnings tell
+the agent to remove comments that narrate history or process or restate code,
+while preserving comments about lasting constraints.
 
 ## User-level rules
 
@@ -107,8 +123,24 @@ their own Codecut hooks, the user-level hook stands down so nothing runs
 twice. User-level hooks run the `codecut` binary from your PATH.
 
 Real-time enforcement requires lifecycle hooks from the coding agent. Codecut's
-policy engine is agent-neutral; Claude Code, Cursor, Codex, and Polytoken
-currently have native hook installers.
+policy engine is agent-neutral; Claude Code, Cursor, Codex, Devin, OpenCode,
+and Polytoken currently have native hook installers. Restart OpenCode after
+setup so it loads the generated plugin.
+
+### T3 Code
+
+T3 Code is a control surface over other coding agents, so configure Codecut for
+the provider T3 Code launches:
+
+```sh
+codecut setup --agent claude
+codecut setup --agent codex
+codecut setup --agent opencode
+```
+
+There is no separate `--agent t3code` mode. For a remote OpenCode server, install
+the user-level OpenCode plugin on the server machine; project plugins work when
+the T3 Code provider runs OpenCode against the local project.
 
 ```sh
 codecut status  # Show active rules and hook health

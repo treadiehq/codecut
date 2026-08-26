@@ -274,7 +274,7 @@ describe("policy merging", () => {
     const userPolicy = compilePolicy({
       directives: [
         {
-          text: "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
+          text: "Keep prompts, agent instructions, tickets, and temporary files out of code comments; preserve comments for lasting constraints and keep comment lines below 25% of added source lines",
           source: {
             path: "~/.config/codecut/AGENTS.md",
             line: 5,

@@ -59,7 +59,7 @@ export const LEGACY_COMMENT_CONTEXT_PATTERNS = [
 ];
 
 export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
-  String.raw`\b(?:AGENTS|CLAUDE|GEMINI)\.md\b`,
+  String.raw`\b(?:AGENTS?|CLAUDE|GEMINI)\.md\b`,
   String.raw`\b(?:system|agent)\s+prompt\b`,
   String.raw`\bagent\s+instructions?\b`,
   String.raw`\bcodecut\s+directives?\b`,
@@ -67,7 +67,7 @@ export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [
   // flag this swallowed any word-digit token (SHA-256, UTF-8, version-1).
   // Well-known standards/crypto prefixes are excluded even in uppercase.
   String.raw`(?-i)\b(?!(?:SHA|UTF|AES|RSA|CRC|ISO|RFC|IEEE|CVE|TLS|HTTP|HMAC)-\d)[A-Z][A-Z0-9]{1,9}-\d+\b`,
-  String.raw`(?:\.cursor/(?:plans|rules)|/tmp/|temporary\s+spec|ephemeral\s+spec)`,
+  String.raw`(?:\.(?:cursor/(?:plans|rules)|devin/rules)|/tmp/|temporary\s+spec|ephemeral\s+spec)`,
   String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent\s+(?:added|changed|implemented)|I\s+(?:added|changed|implemented))\b`,
 ];
 

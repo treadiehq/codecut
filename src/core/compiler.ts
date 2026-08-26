@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { SUPPORTED_AGENT_NAMES } from "./agents.js";
+import {
+  DEFAULT_MAX_COMMENT_PERCENTAGE,
+  DEFAULT_MIN_ADDED_LINES_FOR_COMMENT_PERCENTAGE,
+} from "./comment-density.js";
 import {
   DEFAULT_CODE_FILE_PATTERNS,
   DEFAULT_COMMENT_CONTEXT_PATTERNS,
@@ -58,7 +63,7 @@ const STARTER_DIRECTIVES: Directive[] = [
     },
   },
   {
-    text: "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
+    text: `Keep prompts, agent instructions, tickets, and temporary files out of code comments; preserve comments for lasting constraints and keep comment lines below ${DEFAULT_MAX_COMMENT_PERCENTAGE}% of added source lines`,
     source: {
       path: "starter policy",
       scope: "generated",
@@ -95,6 +100,19 @@ function parseCommentLineLimit(normalized: string): number | undefined {
     return 1;
   }
   return undefined;
+}
+
+function parseCommentPercentageLimit(normalized: string): number | undefined {
+  const explicit = normalized.match(
+    /\bcomment(?:s|\s+lines?)?\b.{0,100}?\b(?:below|under|less\s+than|at\s+most|no\s+more\s+than)\s+(\d+(?:\.\d+)?)\s*(?:%|\bpercent\b)/,
+  );
+  if (!explicit?.[1]) {
+    return undefined;
+  }
+  const limit = Number.parseFloat(explicit[1]);
+  return Number.isFinite(limit) && limit >= 0 && limit <= 100
+    ? limit
+    : undefined;
 }
 
 function hasInlineScope(normalized: string): boolean {
@@ -255,6 +273,7 @@ function classifyDirective(
     !permissiveCommentGuidance
   ) {
     const maxCommentLines = parseCommentLineLimit(normalized);
+    const maxCommentPercentage = parseCommentPercentageLimit(normalized);
     return {
       id: ruleId("comment-quality", directive.text),
       type: "comment-quality",
@@ -265,7 +284,12 @@ function classifyDirective(
       enabled: true,
       filePatterns: DEFAULT_CODE_FILE_PATTERNS,
       bannedPatterns: DEFAULT_COMMENT_CONTEXT_PATTERNS,
+      minAddedLinesForCommentPercentage:
+        DEFAULT_MIN_ADDED_LINES_FOR_COMMENT_PERCENTAGE,
       ...(maxCommentLines === undefined ? {} : { maxCommentLines }),
+      ...(maxCommentPercentage === undefined
+        ? {}
+        : { maxCommentPercentage }),
     };
   }
 
@@ -295,7 +319,7 @@ export function compilePolicy(options: {
   const directives = usingStarterPolicy
     ? STARTER_DIRECTIVES
     : options.directives;
-  const agents: AgentName[] = ["claude", "cursor", "codex", "polytoken"];
+  const agents: AgentName[] = [...SUPPORTED_AGENT_NAMES];
 
   return {
     version: 1,

@@ -3,6 +3,12 @@ import {
   extractCommand,
   receiptMatchesDiffState,
 } from "./events.js";
+import {
+  aggregateCommentStats,
+  exceedsCommentPercentage,
+  formatCommentPercentage,
+  type AddedCommentStats,
+} from "./comment-density.js";
 import { matchesAny } from "./patterns.js";
 import type { AddedCommentBlock } from "./git.js";
 import type {
@@ -163,9 +169,13 @@ function evaluatePostTool(
 function evaluateCommentQuality(
   rule: Extract<PolicyRule, { type: "comment-quality" }>,
   blocks: AddedCommentBlock[],
+  stats: AddedCommentStats[] = [],
 ): RuleViolation | undefined {
   const matchingBlocks = blocks.filter((block) =>
     matchesAny(block.path, rule.filePatterns),
+  );
+  const density = aggregateCommentStats(
+    stats.filter((item) => matchesAny(item.path, rule.filePatterns)),
   );
   const matches = matchingBlocks.flatMap((block) =>
     block.comments.filter((comment) => matchesAny(comment, rule.bannedPatterns)),
@@ -176,7 +186,16 @@ function evaluateCommentQuality(
       : matchingBlocks.filter(
           (block) => block.comments.length > rule.maxCommentLines!,
         );
-  if (matches.length === 0 && longBlocks.length === 0) {
+  const excessiveDensity = exceedsCommentPercentage(
+    density,
+    rule.maxCommentPercentage,
+    rule.minAddedLinesForCommentPercentage,
+  );
+  if (
+    matches.length === 0 &&
+    longBlocks.length === 0 &&
+    !excessiveDensity
+  ) {
     return undefined;
   }
 
@@ -187,6 +206,9 @@ function evaluateCommentQuality(
     longBlocks.length > 0 && rule.maxCommentLines !== undefined
       ? `${countLabel(longBlocks.length, "new code comment")} runs longer than ${countLabel(rule.maxCommentLines, "line")}.`
       : "",
+    excessiveDensity && rule.maxCommentPercentage !== undefined
+      ? `${countLabel(density.commentLines, "new comment line")} make up ${formatCommentPercentage(density)} of ${countLabel(density.sourceLines, "added source line")} (limit ${rule.maxCommentPercentage}%).`
+      : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -196,6 +218,9 @@ function evaluateCommentQuality(
       : "",
     longBlocks.length > 0 && rule.maxCommentLines !== undefined
       ? `Run a subagent to review and de-slopify the comment, then shorten it to at most ${countLabel(rule.maxCommentLines, "line")}.`
+      : "",
+    excessiveDensity && rule.maxCommentPercentage !== undefined
+      ? `Remove comments that narrate history or process or restate the code until comment lines are at most ${rule.maxCommentPercentage}% of added source lines.`
       : "",
     "Keep only lasting code constraints.",
   ]
@@ -209,6 +234,7 @@ function evaluateStop(
   receipts: Receipt[],
   diffStats: DiffStats | undefined,
   addedCommentBlocks: AddedCommentBlock[] = [],
+  addedCommentStats: AddedCommentStats[] = [],
 ): RuleViolation[] {
   const violations: RuleViolation[] = [];
   const edits = receipts.filter((receipt) => receipt.kind === "edit");
@@ -339,7 +365,11 @@ function evaluateStop(
     }
 
     if (rule.type === "comment-quality") {
-      const commentViolation = evaluateCommentQuality(rule, addedCommentBlocks);
+      const commentViolation = evaluateCommentQuality(
+        rule,
+        addedCommentBlocks,
+        addedCommentStats,
+      );
       if (commentViolation) {
         violations.push(commentViolation);
       }
@@ -435,6 +465,7 @@ export function evaluatePolicy(options: {
   receipts: Receipt[];
   diffStats?: DiffStats;
   addedCommentBlocks?: AddedCommentBlock[];
+  addedCommentStats?: AddedCommentStats[];
 }): PolicyDecision {
   const violations =
     options.event.stage === "pre-tool"
@@ -445,6 +476,7 @@ export function evaluatePolicy(options: {
             options.receipts,
             options.diffStats,
             options.addedCommentBlocks,
+            options.addedCommentStats,
           )
         : evaluatePostTool(options.policy, options.event, options.receipts);
 

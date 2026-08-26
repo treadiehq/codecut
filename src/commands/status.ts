@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -6,7 +6,8 @@ import {
   loadPolicy,
   policyPath,
 } from "../core/project.js";
-import type { AgentName, PolicyRule } from "../core/schema.js";
+import type { SupportedAgentName } from "../core/agents.js";
+import type { PolicyRule } from "../core/schema.js";
 import {
   displayPath,
   loadUserPolicy,
@@ -14,10 +15,7 @@ import {
   userConfigDirectory,
   userPolicyPath,
 } from "../core/user.js";
-import { CLAUDE_HOOK_EVENTS } from "../install/claude.js";
-import { CODEX_HOOK_EVENTS } from "../install/codex.js";
-import { CURSOR_HOOK_EVENTS } from "../install/cursor.js";
-import { POLYTOKEN_HOOK_EVENTS } from "../install/polytoken.js";
+import { inspectAgentHooks } from "../install/registry.js";
 import { RUNTIME_RELATIVE_PATH } from "../install/runtime.js";
 
 export type RuleStatus = {
@@ -36,7 +34,7 @@ export type StatusResult = {
   policyPath: string;
   userPolicyPath?: string;
   userRuleCount: number;
-  hookAgent: AgentName;
+  hookAgent: SupportedAgentName;
   /** Absent in user scope: the runtime is a per-project install. */
   runtimeInstalled?: boolean;
   runtimePath?: string;
@@ -50,76 +48,14 @@ export type StatusResult = {
 
 export async function inspectHookSettings(
   baseDirectory: string,
-  hookAgent: AgentName,
+  hookAgent: SupportedAgentName,
   options: { userLevel?: boolean } = {},
 ): Promise<{
   settingsPath: string;
   installedHookEvents: string[];
   missingHookEvents: string[];
 }> {
-  const settingsPath =
-    hookAgent === "cursor"
-      ? path.join(baseDirectory, ".cursor", "hooks.json")
-      : hookAgent === "codex"
-        ? path.join(baseDirectory, ".codex", "hooks.json")
-        : hookAgent === "polytoken"
-          ? options.userLevel
-            ? path.join(
-                process.env.XDG_CONFIG_HOME?.trim() ||
-                  path.join(baseDirectory, ".config"),
-                "polytoken",
-                "hooks.json",
-              )
-            : path.join(baseDirectory, ".polytoken", "hooks.json")
-        : path.join(baseDirectory, ".claude", "settings.json");
-  const requiredHookEvents =
-    hookAgent === "cursor"
-      ? CURSOR_HOOK_EVENTS
-      : hookAgent === "codex"
-        ? CODEX_HOOK_EVENTS
-        : hookAgent === "polytoken"
-          ? POLYTOKEN_HOOK_EVENTS
-          : CLAUDE_HOOK_EVENTS;
-  let installedHookEvents: string[] = [];
-  try {
-    const settings = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;
-    if (hookAgent === "polytoken" && Array.isArray(settings)) {
-      installedHookEvents = requiredHookEvents.filter((event) =>
-        settings.some((entry) => {
-          if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-            return false;
-          }
-          const definition = entry as Record<string, unknown>;
-          const serialized = JSON.stringify(definition);
-          return (
-            definition.event === event &&
-            serialized.includes("codecut") &&
-            serialized.includes("hook --agent polytoken")
-          );
-        }),
-      );
-    } else if (
-      settings &&
-      typeof settings === "object" &&
-      !Array.isArray(settings)
-    ) {
-      const hooks = (settings as { hooks?: Record<string, unknown> }).hooks;
-      installedHookEvents = requiredHookEvents.filter((event) => {
-        const definition = JSON.stringify(hooks?.[event] ?? "");
-        return (
-          definition.includes("codecut") &&
-          definition.includes(`hook --agent ${hookAgent}`)
-        );
-      });
-    }
-  } catch {
-    // Missing or invalid settings are reported as incomplete hook health.
-  }
-  const missingHookEvents = requiredHookEvents.filter(
-    (event) => !installedHookEvents.includes(event),
-  );
-
-  return { settingsPath, installedHookEvents, missingHookEvents };
+  return inspectAgentHooks(baseDirectory, hookAgent, options);
 }
 
 function ruleStatuses(policy: {
@@ -144,7 +80,7 @@ function ruleStatuses(policy: {
 
 export async function getStatus(
   cwd: string,
-  hookAgent: AgentName = "claude",
+  hookAgent: SupportedAgentName = "claude",
 ): Promise<StatusResult> {
   const projectRoot = await findProjectRoot(cwd);
   const configDirectory = userConfigDirectory();

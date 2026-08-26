@@ -212,8 +212,13 @@ type EditEntry = {
   content?: string;
 };
 
+type AddedLinesByPath = {
+  path: string;
+  lines: CommentLine[];
+};
+
 function editPath(input: unknown): string | undefined {
-  for (const key of ["file_path", "path", "notebook_path"]) {
+  for (const key of ["file_path", "filePath", "path", "notebook_path"]) {
     const value = objectValue(input, key);
     if (typeof value === "string") {
       return value;
@@ -270,9 +275,9 @@ export function extractEditedPaths(event: NormalizedHookEvent): string[] {
   return [...paths];
 }
 
-function patchAddedLines(command: string): CommentLine[] {
-  const added: CommentLine[] = [];
-  let activeFile = false;
+function patchAddedLinesByPath(command: string): AddedLinesByPath[] {
+  const files: AddedLinesByPath[] = [];
+  let current: AddedLinesByPath | undefined;
   let nextLine = 1;
   let lastAddedLine: number | undefined;
 
@@ -283,21 +288,25 @@ function patchAddedLines(command: string): CommentLine[] {
   };
 
   for (const line of command.split(/\r?\n/)) {
-    const fileHeader = line.match(
-      /^\*\*\* (Add|Update|Delete) File: /,
-    );
-    if (fileHeader?.[1]) {
-      activeFile = fileHeader[1] !== "Delete";
-      if (activeFile) {
+    const fileHeader = line.match(/^\*\*\* (Add|Update|Delete) File: (.+)$/);
+    if (fileHeader?.[1] && fileHeader[2]) {
+      current =
+        fileHeader[1] === "Delete"
+          ? undefined
+          : { path: fileHeader[2].trim(), lines: [] };
+      if (current) {
+        files.push(current);
+        nextLine = 1;
+        lastAddedLine = undefined;
         startSection();
       }
       continue;
     }
     if (line === "*** End Patch") {
-      activeFile = false;
+      current = undefined;
       continue;
     }
-    if (!activeFile) {
+    if (!current) {
       continue;
     }
 
@@ -314,7 +323,7 @@ function patchAddedLines(command: string): CommentLine[] {
       continue;
     }
     if (line.startsWith("+") && !line.startsWith("+++")) {
-      added.push({ line: nextLine, text: line.slice(1) });
+      current.lines.push({ line: nextLine, text: line.slice(1) });
       lastAddedLine = nextLine;
       nextLine += 1;
       continue;
@@ -328,41 +337,46 @@ function patchAddedLines(command: string): CommentLine[] {
     nextLine += 1;
   }
 
-  return added;
+  return files;
 }
 
-function addedLines(event: NormalizedHookEvent): CommentLine[] {
+function addedLinesByPath(event: NormalizedHookEvent): AddedLinesByPath[] {
   const command = extractCommand(event.toolInput);
   if (command?.includes("*** Begin Patch")) {
-    return patchAddedLines(command);
+    return patchAddedLinesByPath(command);
   }
 
   const nestedEdits = nestedEditEntries(event);
   if (nestedEdits) {
-    const lines: CommentLine[] = [];
-    let nextLine = 1;
-    for (const edit of nestedEdits) {
-      if (edit.content === undefined) {
-        continue;
-      }
-      const contentLines = edit.content.split(/\r?\n/);
-      lines.push(
-        ...contentLines.map((text, index) => ({
-          line: nextLine + index,
-          text,
-        })),
-      );
-      nextLine += contentLines.length + 1;
-    }
-    return lines;
+    return nestedEdits.flatMap((edit) =>
+      edit.content === undefined
+        ? []
+        : [
+            {
+              path: edit.path ?? "unknown",
+              lines: edit.content
+                .split(/\r?\n/)
+                .map((text, index) => ({ line: index + 1, text })),
+            },
+          ],
+    );
   }
 
   const content = editContent(event.toolInput);
   return content === undefined
     ? []
-    : content
-        .split(/\r?\n/)
-        .map((text, index) => ({ line: index + 1, text }));
+    : [
+        {
+          path: editPath(event.toolInput) ?? "unknown",
+          lines: content
+            .split(/\r?\n/)
+            .map((text, index) => ({ line: index + 1, text })),
+        },
+      ];
+}
+
+function addedLines(event: NormalizedHookEvent): CommentLine[] {
+  return addedLinesByPath(event).flatMap((entry) => entry.lines);
 }
 
 export function extractAddedComments(event: NormalizedHookEvent): string[] {
@@ -392,28 +406,11 @@ export function extractAddedCommentBlocksByPath(
     return [];
   }
 
-  const nestedEdits = nestedEditEntries(event);
-  if (nestedEdits) {
-    return nestedEdits.flatMap((edit) => {
-      if (edit.content === undefined) {
-        return [];
-      }
-      return groupCommentBlocks(
-        scanComments(
-          edit.content
-            .split(/\r?\n/)
-            .map((text, index) => ({ line: index + 1, text })),
-        ),
-      ).map((block) => ({
-        path: edit.path ?? "unknown",
-        comments: block.map((comment) => comment.text),
-      }));
-    });
-  }
-
-  const paths = extractEditedPaths(event);
-  return (paths.length > 0 ? paths : ["unknown"]).flatMap((path) =>
-    extractAddedCommentBlocks(event).map((comments) => ({ path, comments })),
+  return addedLinesByPath(event).flatMap(({ path, lines }) =>
+    groupCommentBlocks(scanComments(lines)).map((block) => ({
+      path,
+      comments: block.map((comment) => comment.text),
+    })),
   );
 }
 

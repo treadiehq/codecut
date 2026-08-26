@@ -1,22 +1,10 @@
 import process from "node:process";
 import {
-  formatClaudeOutput,
-  normalizeClaudeEvent,
-} from "../adapters/claude.js";
-import {
-  formatCursorOutput,
-  normalizeCursorEvent,
-} from "../adapters/cursor.js";
-import {
-  formatCodexOutput,
-  normalizeCodexEvent,
-} from "../adapters/codex.js";
-import {
-  formatPolytokenOutput,
-  normalizePolytokenEvent,
-  polytokenEventName,
-  polytokenProceedOutput,
-} from "../adapters/polytoken.js";
+  formatAgentOutput,
+  nativeEventName,
+  normalizeAgentEvent,
+  proceedOutput,
+} from "../adapters/registry.js";
 import { evaluatePolicy } from "../core/engine.js";
 import {
   contextResetReceipt,
@@ -26,17 +14,17 @@ import {
 } from "../core/events.js";
 import {
   findGitRoot,
-  inspectAddedCommentBlocks,
+  inspectAddedComments,
   inspectDiff,
   workingTreeFingerprint,
 } from "../core/git.js";
 import { eventsPath, findProjectRoot } from "../core/project.js";
 import type {
-  AgentName,
   NormalizedHookEvent,
   Policy,
   Receipt,
 } from "../core/schema.js";
+import type { SupportedAgentName } from "../core/agents.js";
 import {
   loadEnforcementPolicy,
   loadUserPolicy,
@@ -84,11 +72,12 @@ async function readStdin(): Promise<string> {
 }
 
 function isNativeStopEvent(eventName: string | undefined): boolean {
-  return eventName?.toLowerCase() === "stop";
+  const normalized = eventName?.toLowerCase();
+  return normalized === "stop" || normalized === "session.idle";
 }
 
 function hookErrorOutput(
-  agent: AgentName,
+  agent: SupportedAgentName,
   event: NormalizedHookEvent | undefined,
   nativeEventName: string | undefined,
   message: string,
@@ -100,6 +89,45 @@ function hookErrorOutput(
     event === undefined ||
     event.stage === "stop" ||
     isNativeStopEvent(nativeEventName);
+
+  if (agent === "opencode") {
+    if (event?.stage === "stop" || isNativeStopEvent(nativeEventName)) {
+      return { outcome: "continue", reason: `${detail} ${recovery}` };
+    }
+    if (
+      event?.stage === "post-tool" ||
+      event?.stage === "post-tool-failure" ||
+      event?.stage === "context-reset" ||
+      nativeEventName === "tool.execute.after" ||
+      nativeEventName === "session.compacted"
+    ) {
+      return { outcome: "allow", reason: detail };
+    }
+    return { outcome: "deny", reason: `${detail} ${recovery}` };
+  }
+
+  if (agent === "devin") {
+    const reason = `${detail} ${recovery}`;
+    if (
+      event?.stage === "post-tool" ||
+      event?.stage === "post-tool-failure" ||
+      nativeEventName?.toLowerCase() === "posttooluse"
+    ) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          additionalContext: reason,
+        },
+      };
+    }
+    if (
+      event?.stage === "context-reset" ||
+      nativeEventName?.toLowerCase() === "postcompaction"
+    ) {
+      return {};
+    }
+    return { decision: "block", reason };
+  }
 
   if (stopFailure) {
     const reason = `${detail} ${recovery}`;
@@ -120,7 +148,7 @@ function hookErrorOutput(
     // Polytoken rejects fields that are not valid for the event's fail-open
     // outcome; in particular, `reason` is not valid with `allow` or
     // `acknowledged`. Keep the fallback strictly protocol-shaped.
-    return polytokenProceedOutput(nativeEventName);
+    return proceedOutput(agent, nativeEventName);
   }
   return {
     systemMessage: `${detail} This non-stop action was allowed.`,
@@ -162,37 +190,19 @@ function matchingStartReceipt(
 }
 
 export async function runHook(
-  agent: AgentName,
+  agent: SupportedAgentName,
   options: { userLevel?: boolean } = {},
 ): Promise<void> {
-  let nativeEventName =
-    agent === "polytoken" ? process.env.POLYTOKEN_HOOK_EVENT : undefined;
+  let nativeName: string | undefined;
   let event: NormalizedHookEvent | undefined;
   try {
-    if (!["claude", "cursor", "codex", "polytoken"].includes(agent)) {
-      throw new Error(
-        `Unsupported hook agent "${agent}". Use "claude", "cursor", "codex", or "polytoken".`,
-      );
-    }
-
     const rawInput = await readStdin();
     const parsedInput = JSON.parse(rawInput);
-    if (agent === "polytoken") {
-      nativeEventName = polytokenEventName(parsedInput);
-    }
-    event =
-      agent === "cursor"
-        ? normalizeCursorEvent(parsedInput)
-        : agent === "codex"
-          ? normalizeCodexEvent(parsedInput)
-          : agent === "polytoken"
-            ? normalizePolytokenEvent(parsedInput)
-          : normalizeClaudeEvent(parsedInput, agent);
+    nativeName = nativeEventName(agent, parsedInput);
+    event = normalizeAgentEvent(agent, parsedInput);
     const proceed = (): void => {
       process.stdout.write(
-        `${JSON.stringify(
-          agent === "polytoken" ? polytokenProceedOutput(nativeEventName) : {},
-        )}\n`,
+        `${JSON.stringify(proceedOutput(agent, nativeName))}\n`,
       );
     };
 
@@ -287,8 +297,10 @@ export async function runHook(
       event.stage === "stop" || event.stage === "agent-response"
         ? await inspectDiff(diffRoot, receipts)
         : undefined;
-    const addedCommentBlocks =
-      event.stage === "stop" ? await inspectAddedCommentBlocks(diffRoot) : [];
+    const addedComments =
+      event.stage === "stop"
+        ? await inspectAddedComments(diffRoot)
+        : { blocks: [], stats: [] };
     const acknowledgements = deriveAcknowledgementReceipts(
       policy,
       event,
@@ -298,11 +310,7 @@ export async function runHook(
     await appendReceipts(eventsFile, acknowledgements);
     receipts = [...receipts, ...acknowledgements];
     if (event.stage === "agent-response") {
-      process.stdout.write(
-        `${JSON.stringify(
-          agent === "polytoken" ? { outcome: "acknowledged" } : {},
-        )}\n`,
-      );
+      process.stdout.write(`${JSON.stringify(proceedOutput(agent, nativeName))}\n`);
       return;
     }
     const decision = evaluatePolicy({
@@ -310,7 +318,8 @@ export async function runHook(
       event,
       receipts,
       diffStats,
-      addedCommentBlocks,
+      addedCommentBlocks: addedComments.blocks,
+      addedCommentStats: addedComments.stats,
     });
     const warningAlreadySent =
       decision.outcome === "warn" &&
@@ -319,20 +328,24 @@ export async function runHook(
         decision.violations.map((violation) => violation.ruleId),
       );
     const outputEvent =
-      agent === "polytoken" && warningAlreadySent
+      (agent === "polytoken" ||
+        agent === "opencode" ||
+        agent === "devin") &&
+      warningAlreadySent
         ? { ...event, stopHookActive: true }
         : event;
-    const output =
-      agent === "cursor"
-        ? formatCursorOutput(outputEvent, decision)
-        : agent === "codex"
-          ? formatCodexOutput(outputEvent, decision)
-          : agent === "polytoken"
-            ? formatPolytokenOutput(outputEvent, decision)
-            : formatClaudeOutput(outputEvent, decision);
+    const output = formatAgentOutput(agent, outputEvent, decision);
     const warningDelivered =
       decision.outcome === "warn" && agent === "polytoken"
         ? typeof output.reason === "string" && output.reason.trim().length > 0
+        : decision.outcome === "warn" && agent === "opencode"
+          ? output.outcome === "continue" &&
+            typeof output.reason === "string" &&
+            output.reason.trim().length > 0
+          : decision.outcome === "warn" && agent === "devin"
+            ? event.stage === "pre-tool"
+              ? false
+              : true
         : undefined;
     await appendReceipts(eventsFile, [
       decisionReceipt(event, decision, new Date(), warningDelivered),
@@ -343,7 +356,7 @@ export async function runHook(
     process.stderr.write(`Codecut hook error: ${message}\n`);
     process.stdout.write(
       `${JSON.stringify(
-        hookErrorOutput(agent, event, nativeEventName, message),
+        hookErrorOutput(agent, event, nativeName, message),
       )}\n`,
     );
   }

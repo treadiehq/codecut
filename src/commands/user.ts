@@ -18,7 +18,7 @@ two overlap.
 
 ## Defaults
 
-- Keep prompts, agent instructions, tickets, and temporary files out of code comments
+- Keep prompts, agent instructions, tickets, and temporary files out of code comments; preserve comments for lasting constraints and keep comment lines below 25% of added source lines
 
 Add or change rules one per line, then compile them:
 
@@ -29,7 +29,7 @@ codecut setup --user --refresh-policy
 More example rules, shown inside a code fence so they stay inactive:
 
 \`\`\`md
-- Never leave prompts, agent instructions, or tickets in code comments
+- Keep comment lines below 15% of added source lines
 - All unit tests must pass
 \`\`\`
 `;

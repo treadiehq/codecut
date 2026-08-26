@@ -80,6 +80,8 @@ describe("hook error enforcement", () => {
           ),
         },
       },
+      { agent: "devin", expected: { decision: "block" } },
+      { agent: "opencode", expected: { outcome: "deny" } },
       { agent: "polytoken", expected: { outcome: "continue" } },
     ];
 
@@ -152,6 +154,30 @@ describe("hook error enforcement", () => {
         agent: "polytoken",
         input: {
           event: "stop",
+          session_id: "broken-state",
+          cwd: projectRoot,
+        },
+        expected: {
+          outcome: "continue",
+          reason: expect.stringContaining("Event state is malformed"),
+        },
+      },
+      {
+        agent: "devin",
+        input: {
+          hook_event_name: "Stop",
+          session_id: "broken-state",
+          cwd: projectRoot,
+        },
+        expected: {
+          decision: "block",
+          reason: expect.stringContaining("Event state is malformed"),
+        },
+      },
+      {
+        agent: "opencode",
+        input: {
+          event: "session.idle",
           session_id: "broken-state",
           cwd: projectRoot,
         },

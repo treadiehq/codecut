@@ -1,9 +1,19 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readdir, readlink, realpath } from "node:fs/promises";
+import {
+  lstat,
+  readFile,
+  readdir,
+  readlink,
+  realpath,
+} from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
+import {
+  measureAddedComments,
+  type AddedCommentStats,
+} from "./comment-density.js";
 import { groupCommentBlocks, scanComments } from "./comments.js";
 import { parseUnifiedDiff } from "./diff.js";
 import type { DiffStats, Receipt } from "./schema.js";
@@ -12,6 +22,13 @@ export type AddedCommentBlock = {
   path: string;
   comments: string[];
 };
+
+export type InspectedAddedComments = {
+  blocks: AddedCommentBlock[];
+  stats: AddedCommentStats[];
+};
+
+const COMMENT_INSPECTION_MAX_BYTES = 1024 * 1024;
 
 const execFileAsync = promisify(execFile);
 const FINGERPRINT_SKIPPED_DIRECTORIES = new Set([
@@ -374,44 +391,89 @@ export async function findGitRoot(cwd: string): Promise<string | undefined> {
   return root && root.length > 0 ? root : undefined;
 }
 
-export async function inspectAddedCommentBlocks(
+export async function inspectAddedComments(
   cwd: string,
-): Promise<AddedCommentBlock[]> {
+): Promise<InspectedAddedComments> {
   const projectRoot = await realpath(cwd);
   const gitRoot = (
     await git(projectRoot, ["rev-parse", "--show-toplevel"])
   )?.trim();
   if (!gitRoot) {
-    return [];
+    return { blocks: [], stats: [] };
   }
   const prefix = path
     .relative(gitRoot, projectRoot)
     .split(path.sep)
     .join("/");
-  const diff = await git(gitRoot, [
-    "diff",
-    "HEAD",
-    "--",
-    prefix || ".",
-  ]);
-  if (diff === undefined) {
-    return [];
-  }
+  const head = (
+    await git(gitRoot, ["rev-parse", "--verify", "HEAD"])
+  )?.trim();
+  const diff = head
+    ? ((await git(gitRoot, ["diff", "HEAD", "--", prefix || "."])) ?? "")
+    : "";
 
-  return parseUnifiedDiff(diff).flatMap((file) => {
+  const blocks: AddedCommentBlock[] = [];
+  const stats: AddedCommentStats[] = [];
+  for (const file of parseUnifiedDiff(diff)) {
     const relativePath = projectRelativePath(
       gitRoot,
       projectRoot,
       file.path,
     );
     if (!relativePath) {
-      return [];
+      continue;
     }
-    return groupCommentBlocks(scanComments(file.addedLines)).map((block) => ({
-      path: relativePath,
-      comments: block.map((comment) => comment.text),
-    }));
-  });
+    stats.push(measureAddedComments(relativePath, file.addedLines));
+    blocks.push(
+      ...groupCommentBlocks(scanComments(file.addedLines)).map((block) => ({
+        path: relativePath,
+        comments: block.map((comment) => comment.text),
+      })),
+    );
+  }
+
+  const currentFiles = await listGitProjectFiles(
+    projectRoot,
+    head ? ["--others"] : ["--cached", "--others"],
+  );
+  for (const relativePath of currentFiles ?? []) {
+    const absolutePath = path.resolve(projectRoot, relativePath);
+    let fileStats;
+    try {
+      fileStats = await lstat(absolutePath);
+    } catch {
+      continue;
+    }
+    if (
+      !fileStats.isFile() ||
+      fileStats.isSymbolicLink() ||
+      fileStats.size > COMMENT_INSPECTION_MAX_BYTES
+    ) {
+      continue;
+    }
+    const contents = await readFile(absolutePath);
+    if (contents.includes(0)) {
+      continue;
+    }
+    const lines = contents
+      .toString("utf8")
+      .split(/\r?\n/)
+      .map((text, index) => ({ line: index + 1, text }));
+    stats.push(measureAddedComments(relativePath, lines));
+    blocks.push(
+      ...groupCommentBlocks(scanComments(lines)).map((block) => ({
+        path: relativePath,
+        comments: block.map((comment) => comment.text),
+      })),
+    );
+  }
+  return { blocks, stats };
+}
+
+export async function inspectAddedCommentBlocks(
+  cwd: string,
+): Promise<AddedCommentBlock[]> {
+  return (await inspectAddedComments(cwd)).blocks;
 }
 
 export async function inspectDiff(

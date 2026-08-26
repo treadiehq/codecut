@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   inspectAddedCommentBlocks,
+  inspectAddedComments,
   inspectDiff,
   workingTreeFingerprint,
 } from "../src/core/git.js";
@@ -107,6 +108,11 @@ describe("working-tree fingerprints", () => {
       deleted: 0,
       complete: true,
     });
+    await expect(inspectAddedComments(directory)).resolves.toMatchObject({
+      stats: [
+        { path: "massive.ts", sourceLines: 600, commentLines: 0 },
+      ],
+    });
   });
 
   it("counts untracked text files after commits exist", async () => {
@@ -148,6 +154,11 @@ describe("working-tree fingerprints", () => {
       added: 550,
       deleted: 0,
       complete: true,
+    });
+    await expect(inspectAddedComments(directory)).resolves.toMatchObject({
+      stats: [
+        { path: "generated.ts", sourceLines: 550, commentLines: 0 },
+      ],
     });
   });
 
@@ -227,6 +238,17 @@ describe("working-tree fingerprints", () => {
         comments: ["Per the prompt, keep this workaround."],
       },
     ]);
+    await expect(inspectAddedComments(projectRoot)).resolves.toEqual({
+      blocks: [
+        {
+          path: "src/example.ts",
+          comments: ["Per the prompt, keep this workaround."],
+        },
+      ],
+      stats: [
+        { path: "src/example.ts", sourceLines: 2, commentLines: 1 },
+      ],
+    });
   });
 
   it("fingerprints non-Git projects without including Codecut state", async () => {

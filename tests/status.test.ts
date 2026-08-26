@@ -9,6 +9,7 @@ import { writePolicy } from "../src/core/project.js";
 import { installClaudeHooks } from "../src/install/claude.js";
 import { installCodexHooks } from "../src/install/codex.js";
 import { installCursorHooks } from "../src/install/cursor.js";
+import { installDevinHooks } from "../src/install/devin.js";
 import { installPolytokenHooks } from "../src/install/polytoken.js";
 
 const temporaryDirectories: string[] = [];
@@ -79,6 +80,7 @@ describe("hook health status", () => {
     ["claude", "SessionStart"],
     ["cursor", "preCompact"],
     ["codex", "SessionStart"],
+    ["devin", "PostCompaction"],
     ["polytoken", "post_clear"],
     ["polytoken", "post_compaction"],
   ] as const)(
@@ -95,7 +97,9 @@ describe("hook health status", () => {
             ? await installCursorHooks(projectRoot)
             : agent === "codex"
               ? await installCodexHooks(projectRoot)
-              : await installPolytokenHooks(projectRoot);
+              : agent === "devin"
+                ? await installDevinHooks(projectRoot)
+                : await installPolytokenHooks(projectRoot);
       const settings = JSON.parse(
         await readFile(installed.settingsPath, "utf8"),
       ) as unknown;
@@ -117,9 +121,14 @@ describe("hook health status", () => {
         );
       } else {
         const objectSettings = settings as {
-          hooks: Record<string, unknown>;
+          hooks?: Record<string, unknown>;
+          [key: string]: unknown;
         };
-        delete objectSettings.hooks[resetEvent];
+        if (agent === "devin") {
+          delete objectSettings[resetEvent];
+        } else {
+          delete objectSettings.hooks?.[resetEvent];
+        }
         await writeFile(installed.settingsPath, JSON.stringify(objectSettings));
       }
 

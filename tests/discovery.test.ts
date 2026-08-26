@@ -127,6 +127,47 @@ describe("directive discovery", () => {
     ).toHaveLength(1);
   });
 
+  it("discovers Devin rules and preserves trigger scope", async () => {
+    const directory = await mkdtemp(
+      path.join(process.cwd(), ".codecut-discovery-devin-"),
+    );
+    temporaryDirectories.push(directory);
+    await mkdir(path.join(directory, ".devin", "rules"), { recursive: true });
+    await writeFile(
+      path.join(directory, "AGENT.md"),
+      "- Always run tests locally\n",
+    );
+    await writeFile(
+      path.join(directory, ".devin", "global_rules.md"),
+      "- Treat warnings as errors\n",
+    );
+    await writeFile(
+      path.join(directory, ".devin", "rules", "always.md"),
+      "---\ntrigger: always_on\n---\n- All unit tests must pass\n",
+    );
+    await writeFile(
+      path.join(directory, ".devin", "rules", "scoped.md"),
+      "---\ntrigger: model_decision\n---\n- Keep release changes small\n",
+    );
+
+    const result = await discoverDirectives(directory);
+
+    expect(result.sources).toEqual([
+      path.join(".devin", "global_rules.md"),
+      path.join(".devin", "rules", "always.md"),
+      path.join(".devin", "rules", "scoped.md"),
+      "AGENT.md",
+    ]);
+    expect(
+      result.directives.find((item) => item.text.includes("unit tests"))?.source
+        .conditional,
+    ).toBe(false);
+    expect(
+      result.directives.find((item) => item.text.includes("release changes"))
+        ?.source.conditional,
+    ).toBe(true);
+  });
+
   it("does not treat a list item before a thematic break as a heading", () => {
     const directives = parseDirectives(
       [

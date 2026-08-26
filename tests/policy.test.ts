@@ -105,9 +105,16 @@ describe("starter policy compilation", () => {
       "Keep changes small and focused",
       "Verify your work",
       "Run tests locally",
-      "Keep prompts, agent instructions, tickets, and temporary files out of code comments",
+      "Keep prompts, agent instructions, tickets, and temporary files out of code comments; preserve comments for lasting constraints and keep comment lines below 25% of added source lines",
     ]);
     expect(compiled.rules[4]?.type).toBe("local-testing");
+    expect(compiled.rules[5]).toEqual(
+      expect.objectContaining({
+        type: "comment-quality",
+        maxCommentPercentage: 25,
+        minAddedLinesForCommentPercentage: 20,
+      }),
+    );
   });
 
   it("classifies David's directives into the intended policy types", () => {
@@ -116,6 +123,8 @@ describe("starter policy compilation", () => {
       "claude",
       "cursor",
       "codex",
+      "devin",
+      "opencode",
       "polytoken",
     ]);
     expect(compiled.rules.map((rule) => rule.type)).toEqual([
@@ -360,6 +369,28 @@ describe("starter policy compilation", () => {
     ).toEqual([1, 1, undefined]);
   });
 
+  it("parses a comment percentage limit from directive text", () => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text: "Keep comment lines below 15% of added source lines",
+          source: { path: "AGENTS.md", line: 1, scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]).toEqual(
+      expect.objectContaining({
+        type: "comment-quality",
+        maxCommentPercentage: 15,
+        minAddedLinesForCommentPercentage: 20,
+      }),
+    );
+  });
+
   it("rejects invalid policy regular expressions", () => {
     const compiled = policy();
     const testRule = compiled.rules.find(
@@ -373,6 +404,19 @@ describe("starter policy compilation", () => {
     expect(() => policySchema.parse(compiled)).toThrow(
       "must be a valid regular expression",
     );
+  });
+
+  it("rejects comment percentages outside zero to one hundred", () => {
+    const compiled = policy();
+    const commentRule = compiled.rules.find(
+      (rule) => rule.type === "comment-quality",
+    );
+    if (!commentRule || commentRule.type !== "comment-quality") {
+      throw new Error("comment rule missing");
+    }
+    commentRule.maxCommentPercentage = 101;
+
+    expect(() => policySchema.parse(compiled)).toThrow();
   });
 });
 
@@ -1230,6 +1274,100 @@ describe("starter policy enforcement", () => {
         receipts: [],
       }).outcome,
     ).toBe("allow");
+  });
+
+  it("warns when new comments exceed the configured percentage", () => {
+    const densityPolicy = compilePolicy({
+      directives: [
+        {
+          text: "Keep comment lines below 25% of added source lines",
+          source: { path: "AGENTS.md", line: 1, scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+    const postTool = evaluatePolicy({
+      policy: densityPolicy,
+      event: hookEvent("post-tool", {
+        toolName: "Edit",
+        toolInput: {
+          file_path: "src/example.ts",
+          new_string: [
+            ...Array.from(
+              { length: 6 },
+              (_, index) => `// Lasting constraint ${index + 1}.`,
+            ),
+            ...Array.from(
+              { length: 14 },
+              (_, index) => `export const value${index + 1} = ${index + 1};`,
+            ),
+          ].join("\n"),
+        },
+      }),
+      receipts: [],
+    });
+    expect(postTool.outcome).toBe("allow");
+
+    const decisionWith = (commentLines: number, sourceLines: number) =>
+      evaluatePolicy({
+        policy: densityPolicy,
+        event: hookEvent("stop"),
+        receipts: [],
+        addedCommentStats: [
+          { path: "src/example.ts", sourceLines, commentLines },
+        ],
+      });
+
+    const excessive = decisionWith(6, 20);
+    expect(excessive.outcome).toBe("warn");
+    expect(excessive.violations[0]?.evidence).toContain(
+      "6 new comment lines make up 30% of 20 added source lines",
+    );
+    expect(excessive.violations[0]?.recovery).toContain(
+      "narrate history or process",
+    );
+    expect(excessive.violations[0]?.recovery).toContain(
+      "lasting code constraints",
+    );
+
+    expect(
+      decisionWith(5, 20).outcome,
+    ).toBe("allow");
+    expect(
+      decisionWith(6, 10).outcome,
+    ).toBe("allow");
+  });
+
+  it("checks comment density across the complete diff at stop", () => {
+    const densityPolicy = compilePolicy({
+      directives: [
+        {
+          text: "Keep comments under 25 percent of added source lines",
+          source: { path: "AGENTS.md", line: 1, scope: "user" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    });
+
+    const decision = evaluatePolicy({
+      policy: densityPolicy,
+      event: hookEvent("stop"),
+      receipts: [],
+      addedCommentStats: [
+        { path: "src/first.ts", sourceLines: 15, commentLines: 5 },
+        { path: "src/second.ts", sourceLines: 15, commentLines: 5 },
+        { path: "README.md", sourceLines: 100, commentLines: 100 },
+      ],
+    });
+
+    expect(decision.outcome).toBe("warn");
+    expect(decision.violations[0]?.evidence).toContain(
+      "10 new comment lines make up 33.3% of 30 added source lines",
+    );
   });
 
   it("flags comment blocks longer than the configured line limit", () => {
