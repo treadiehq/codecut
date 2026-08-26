@@ -184,6 +184,120 @@ describe("starter policy compilation", () => {
   });
 
   it.each([
+    "Open a non-draft PR",
+    "The pull request must be ready for review",
+    "The PR should not be a draft",
+  ])("recognizes an explicit ready-PR requirement: %s", (text) => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text,
+          source: { path: "AGENTS.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]).toMatchObject({
+      type: "require-ready-github-pr",
+      mode: "block",
+      confirmed: true,
+    });
+  });
+
+  it.each([
+    "Open a PR",
+    "Open a non-draft PR when publishing a release",
+    "Open a non-draft PR and make sure all tests pass",
+  ])("keeps ambiguous or conditional PR guidance advisory: %s", (text) => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text,
+          source: { path: "AGENTS.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+
+    expect(compiled.rules[0]?.type).toBe("advisory");
+  });
+
+  it("enforces verified PR failures and warns when verification is unavailable", () => {
+    const compiled = compilePolicy({
+      directives: [
+        {
+          text: "Open a non-draft PR",
+          source: { path: "AGENTS.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "cursor",
+      acceptBlockingRules: true,
+    });
+    const evaluate = (
+      githubPrEvidence: NonNullable<
+        Parameters<typeof evaluatePolicy>[0]["githubPrEvidence"]
+      >,
+    ) =>
+      evaluatePolicy({
+        policy: compiled,
+        event: hookEvent("stop"),
+        receipts: [],
+        githubPrEvidence,
+      });
+
+    expect(
+      evaluate({
+        status: "ready",
+        branch: "feature/example",
+        headOid: "0123456789abcdef",
+        url: "https://github.com/example/repository/pull/1",
+      }).outcome,
+    ).toBe("allow");
+
+    const draft = evaluate({
+      status: "draft",
+      branch: "feature/example",
+      headOid: "0123456789abcdef",
+      url: "https://github.com/example/repository/pull/1",
+    });
+    expect(draft.outcome).toBe("block");
+    expect(draft.violations[0]?.recovery).toContain("gh pr ready");
+
+    expect(
+      evaluate({
+        status: "missing",
+        branch: "feature/example",
+        headOid: "0123456789abcdef",
+      }).outcome,
+    ).toBe("block");
+    expect(
+      evaluate({
+        status: "stale",
+        branch: "feature/example",
+        headOid: "0123456789abcdef",
+        prHeadOid: "fedcba9876543210",
+        url: "https://github.com/example/repository/pull/1",
+      }).outcome,
+    ).toBe("block");
+
+    const unverified = evaluate({
+      status: "unverified",
+      reason: "gh-auth",
+    });
+    expect(unverified.outcome).toBe("warn");
+    expect(unverified.violations[0]).toMatchObject({
+      severity: "warn",
+      recovery: expect.stringContaining("gh auth login"),
+    });
+  });
+
+  it.each([
     "Treat all warnings as errors",
     "Treat the warnings as errors",
     "Treat any warnings as errors",

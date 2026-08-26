@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -278,6 +279,121 @@ describe("hook error enforcement", () => {
       hookSpecificOutput: { permissionDecision: "deny" },
     });
     expect(result.stderr).not.toContain("Codecut hook error");
+  });
+});
+
+describe("GitHub PR completion gate", () => {
+  it("asks Cursor to mark a draft PR ready before completion", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-ready-pr-"),
+    );
+    const fakeBin = await mkdtemp(path.join(repositoryRoot, ".codecut-bin-"));
+    temporaryDirectories.push(projectRoot, fakeBin);
+    await writeFile(
+      path.join(projectRoot, "example.ts"),
+      "export const example = true;\n",
+    );
+    const git = (args: string[]) =>
+      spawnSync("git", args, {
+        cwd: projectRoot,
+        encoding: "utf8",
+      });
+    expect(
+      git(["init", "--quiet", "--initial-branch", "feature/example"]).status,
+    ).toBe(0);
+    expect(git(["add", "example.ts"]).status).toBe(0);
+    expect(
+      git([
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ]).status,
+    ).toBe(0);
+    const head = git(["rev-parse", "HEAD"]).stdout.trim();
+
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [
+          {
+            text: "Open a non-draft PR",
+            source: {
+              path: "AGENTS.md",
+              line: 1,
+              scope: "project",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "cursor",
+        acceptBlockingRules: true,
+      }),
+    );
+
+    const fakeGh = path.join(fakeBin, "gh");
+    await writeFile(
+      fakeGh,
+      [
+        "#!/usr/bin/env node",
+        "const isDraft = process.env.FAKE_GH_DRAFT === '1';",
+        "const headRefOid = process.env.FAKE_GH_HEAD;",
+        "console.log(JSON.stringify([{",
+        "  isDraft,",
+        "  headRefOid,",
+        "  url: 'https://github.com/example/repository/pull/42'",
+        "}]));",
+        "",
+      ].join("\n"),
+    );
+    await chmod(fakeGh, 0o755);
+
+    const runHook = (draft: boolean) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "cursor",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify({
+            hook_event_name: "stop",
+            conversation_id: "ready-pr",
+            cwd: projectRoot,
+            loop_count: 0,
+            status: "completed",
+          }),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${fakeBin}${path.delimiter}${process.env.PATH ?? ""}`,
+            FAKE_GH_DRAFT: draft ? "1" : "0",
+            FAKE_GH_HEAD: head,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+
+    const draft = runHook(true);
+    expect(draft.status, draft.stderr).toBe(0);
+    expect(JSON.parse(draft.stdout)).toMatchObject({
+      followup_message: expect.stringContaining("gh pr ready"),
+    });
+
+    const ready = runHook(false);
+    expect(ready.status, ready.stderr).toBe(0);
+    expect(JSON.parse(ready.stdout)).toEqual({});
   });
 });
 

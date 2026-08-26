@@ -140,6 +140,43 @@ describe("hook health status", () => {
   );
 });
 
+describe("policy self-test", () => {
+  it("tests a ready-PR rule without live GitHub access", async () => {
+    const projectRoot = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-ready-pr-test-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [
+          {
+            text: "Open a non-draft PR",
+            source: {
+              path: "AGENTS.md",
+              line: 1,
+              scope: "project",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "cursor",
+        acceptBlockingRules: true,
+      }),
+    );
+
+    const result = await testPolicy(projectRoot);
+    expect(result.passed).toBe(true);
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        status: "PASS",
+        detail: "sample was blocked",
+      }),
+    ]);
+  });
+});
+
 describe("user-level fallback without a project policy", () => {
   async function withUserPolicy<T>(
     run: (cwd: string) => Promise<T>,

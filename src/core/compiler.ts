@@ -168,6 +168,14 @@ function classifyDirective(
     );
   const verificationRule =
     /\bverify\b|\bdon't assume\b|\bdo not assume\b/.test(normalized);
+  const readyGithubPrRule =
+    /\b(?:pr|pull request)\b/.test(normalized) &&
+    /\b(?:non[\s-]?draft|ready for review|mark(?:ed)?\s+(?:the\s+)?(?:pr|pull request)\s+ready|not\s+(?:be\s+)?(?:a\s+)?draft)\b/.test(
+      normalized,
+    ) &&
+    /\b(?:open|create|ensure|must|should|required?|mark|make|keep)\b/.test(
+      normalized,
+    );
   const commentRule = /\bcomments?\b/.test(normalized);
   const categoryCount = [
     warningRule,
@@ -175,6 +183,7 @@ function classifyDirective(
     localTestRule,
     blastRadiusRule,
     verificationRule,
+    readyGithubPrRule,
     commentRule,
   ].filter(Boolean).length;
   if (categoryCount > 1 && hasCompoundStructure(normalized)) {
@@ -189,7 +198,8 @@ function classifyDirective(
     };
   }
   const unsafeForBlockingInference =
-    hasNegation(normalized) || hasInlineScope(normalized);
+    (hasNegation(normalized) && !readyGithubPrRule) ||
+    hasInlineScope(normalized);
   const blockingRule = unsafeForBlockingInference
     ? undefined
     : warningRule
@@ -211,6 +221,10 @@ function classifyDirective(
               remoteCommandPatterns: DEFAULT_REMOTE_COMMAND_PATTERNS,
               remoteToolPatterns: DEFAULT_REMOTE_TOOL_PATTERNS,
             }
+          : readyGithubPrRule
+            ? {
+                type: "require-ready-github-pr" as const,
+              }
           : undefined;
 
   if (blockingRule) {

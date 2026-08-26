@@ -1,4 +1,5 @@
 import { evaluatePolicy } from "../core/engine.js";
+import type { GithubPrEvidence } from "../core/github.js";
 import { findProjectRoot } from "../core/project.js";
 import {
   loadEffectivePolicy,
@@ -73,6 +74,7 @@ function fixtureFor(rule: PolicyRule): {
   hookEvent: NormalizedHookEvent;
   receipts: Receipt[];
   diffStats?: DiffStats;
+  githubPrEvidence?: GithubPrEvidence;
 } | undefined {
   switch (rule.type) {
     case "local-testing":
@@ -126,6 +128,17 @@ function fixtureFor(rule: PolicyRule): {
         }),
         receipts: [],
       };
+    case "require-ready-github-pr":
+      return {
+        hookEvent: event("stop"),
+        receipts: [],
+        githubPrEvidence: {
+          status: "draft",
+          branch: "feature/example",
+          headOid: "0123456789abcdef",
+          url: "https://github.com/example/repository/pull/1",
+        },
+      };
     case "meta-compliance":
     case "advisory":
       return undefined;
@@ -148,6 +161,7 @@ function testRule(policy: Policy, rule: PolicyRule): TestResult {
     event: fixture.hookEvent,
     receipts: fixture.receipts,
     diffStats: fixture.diffStats,
+    githubPrEvidence: fixture.githubPrEvidence,
   });
   const detected = decision.violations.some(
     (violation) => violation.ruleId === rule.id,

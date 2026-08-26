@@ -13,6 +13,7 @@ Codecut explains what happened and how to fix it.
 - Temporary agent context left in code comments
 - Code comments longer than a limit you set ("no comments longer than one line")
 - Comment-heavy changes above a percentage you set ("keep comment lines below 25% of added source lines")
+- Draft or missing GitHub PRs when you require a ready-for-review handoff
 - Large changes that need an explanation
 
 Codecut only blocks behavior it can check reliably. Everything else stays
@@ -92,6 +93,29 @@ Codecut checks comment density after at least 20 non-blank source lines have
 been added, which avoids noisy warnings on small edits. Density warnings tell
 the agent to remove comments that narrate history or process or restate code,
 while preserving comments about lasting constraints.
+
+### Require a ready GitHub PR
+
+Cursor Automations create draft PRs by default. To require the agent to finish
+with a reviewable PR, add this explicit opt-in rule:
+
+```md
+- Open a non-draft PR
+```
+
+Then refresh and accept the blocking rule:
+
+```sh
+codecut setup --agent cursor --refresh-policy --accept
+```
+
+At the stop hook, Codecut uses `git` and the authenticated GitHub CLI to verify
+that the current branch has an open, non-draft PR at the current commit. A
+draft tells the agent to run `gh pr ready`; a missing PR tells it to run
+`gh pr create --fill`; and a stale PR must be pushed. Install `gh` and run
+`gh auth login` first. If GitHub state cannot be verified because the CLI,
+authentication, or network is unavailable, Codecut warns instead of claiming
+the PR failed the rule.
 
 ## User-level rules
 

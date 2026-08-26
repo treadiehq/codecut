@@ -119,6 +119,38 @@ describe("persistent runtime installation", () => {
     expect(policy.rules[0]?.type).toBe("advisory");
   });
 
+  it("loads ready-PR rules without changing policy version 1", () => {
+    const policy = parsePolicyDocument(
+      JSON.stringify({
+        version: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        agents: ["cursor"],
+        sources: ["AGENTS.md"],
+        rules: [
+          {
+            id: "require-ready-github-pr-example",
+            directive: "Open a non-draft PR",
+            source: {
+              path: "AGENTS.md",
+              scope: "project",
+              conditional: false,
+            },
+            mode: "block",
+            confirmed: true,
+            enabled: true,
+            type: "require-ready-github-pr",
+          },
+        ],
+      }),
+    );
+
+    expect(policy).toMatchObject({
+      version: 1,
+      rules: [{ type: "require-ready-github-pr" }],
+    });
+  });
+
   it("migrates only the legacy default comment patterns", () => {
     const policy = parsePolicyDocument(
       JSON.stringify({

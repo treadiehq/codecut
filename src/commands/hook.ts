@@ -18,6 +18,7 @@ import {
   inspectDiff,
   workingTreeFingerprint,
 } from "../core/git.js";
+import { inspectGithubPullRequest } from "../core/github.js";
 import { eventsPath, findProjectRoot } from "../core/project.js";
 import type {
   NormalizedHookEvent,
@@ -293,14 +294,23 @@ export async function runHook(
     }
     await appendReceipts(eventsFile, newReceipts);
     receipts = [...receipts, ...newReceipts];
-    const diffStats =
+    const inspectReadyPr =
+      event.stage === "stop" &&
+      policy.rules.some(
+        (rule) =>
+          rule.enabled &&
+          rule.mode !== "off" &&
+          rule.type === "require-ready-github-pr",
+      );
+    const [diffStats, addedComments, githubPrEvidence] = await Promise.all([
       event.stage === "stop" || event.stage === "agent-response"
-        ? await inspectDiff(diffRoot, receipts)
-        : undefined;
-    const addedComments =
+        ? inspectDiff(diffRoot, receipts)
+        : undefined,
       event.stage === "stop"
-        ? await inspectAddedComments(diffRoot)
-        : { blocks: [], stats: [] };
+        ? inspectAddedComments(diffRoot)
+        : { blocks: [], stats: [] },
+      inspectReadyPr ? inspectGithubPullRequest(diffRoot) : undefined,
+    ]);
     const acknowledgements = deriveAcknowledgementReceipts(
       policy,
       event,
@@ -320,6 +330,7 @@ export async function runHook(
       diffStats,
       addedCommentBlocks: addedComments.blocks,
       addedCommentStats: addedComments.stats,
+      githubPrEvidence,
     });
     const warningAlreadySent =
       decision.outcome === "warn" &&

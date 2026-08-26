@@ -9,6 +9,7 @@ import {
   formatCommentPercentage,
   type AddedCommentStats,
 } from "./comment-density.js";
+import type { GithubPrEvidence } from "./github.js";
 import { matchesAny } from "./patterns.js";
 import type { AddedCommentBlock } from "./git.js";
 import type {
@@ -29,12 +30,13 @@ function violation(
   rule: PolicyRule,
   evidence: string,
   recovery: string,
+  forcedSeverity?: "warn" | "block",
 ): RuleViolation {
   return {
     ruleId: rule.id,
     directive: rule.directive,
     source: rule.source,
-    severity: severity(rule),
+    severity: forcedSeverity ?? severity(rule),
     evidence,
     recovery,
   };
@@ -235,6 +237,7 @@ function evaluateStop(
   diffStats: DiffStats | undefined,
   addedCommentBlocks: AddedCommentBlock[] = [],
   addedCommentStats: AddedCommentStats[] = [],
+  githubPrEvidence?: GithubPrEvidence,
 ): RuleViolation[] {
   const violations: RuleViolation[] = [];
   const edits = receipts.filter((receipt) => receipt.kind === "edit");
@@ -376,6 +379,104 @@ function evaluateStop(
       continue;
     }
 
+    if (rule.type === "require-ready-github-pr") {
+      const evidence = githubPrEvidence ?? {
+        status: "unverified" as const,
+        reason: "github-unavailable" as const,
+      };
+      if (evidence.status === "ready") {
+        continue;
+      }
+      if (evidence.status === "draft") {
+        violations.push(
+          violation(
+            rule,
+            `The open GitHub PR for branch ${evidence.branch} is still a draft.`,
+            "Run `gh pr ready`, then try finishing again.",
+          ),
+        );
+        continue;
+      }
+      if (evidence.status === "missing") {
+        violations.push(
+          violation(
+            rule,
+            `No open GitHub PR was found for branch ${evidence.branch}.`,
+            "Push the branch and run `gh pr create --fill`, then try finishing again.",
+          ),
+        );
+        continue;
+      }
+      if (evidence.status === "stale") {
+        violations.push(
+          violation(
+            rule,
+            `The open GitHub PR for branch ${evidence.branch} does not contain the current commit ${evidence.headOid.slice(0, 12)}.`,
+            "Push the current branch to update the PR, then try finishing again.",
+          ),
+        );
+        continue;
+      }
+
+      const unverifiedMessage: Record<
+        Extract<GithubPrEvidence, { status: "unverified" }>["reason"],
+        { evidence: string; recovery: string }
+      > = {
+        "not-git": {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because this directory is not a Git repository.",
+          recovery:
+            "Run this task in the intended Git repository, then try finishing again.",
+        },
+        "no-head": {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because the repository has no commit at HEAD.",
+          recovery:
+            "Commit the work, push the branch, and create or update the PR.",
+        },
+        "detached-head": {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because HEAD is detached.",
+          recovery:
+            "Check out the intended branch, then create or update its PR.",
+        },
+        "gh-missing": {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because GitHub CLI is not installed.",
+          recovery:
+            "Install GitHub CLI from https://cli.github.com and run `gh auth login`.",
+        },
+        "gh-auth": {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because GitHub CLI is not authenticated.",
+          recovery: "Run `gh auth login`, then try finishing again.",
+        },
+        timeout: {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because the GitHub check timed out.",
+          recovery:
+            "Check network access and run `gh auth status`, then try finishing again.",
+        },
+        "github-unavailable": {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because GitHub was unavailable.",
+          recovery:
+            "Check the GitHub remote, network access, and `gh auth status`, then try finishing again.",
+        },
+        "invalid-response": {
+          evidence:
+            "Codecut could not verify a ready GitHub PR because GitHub CLI returned an invalid response.",
+          recovery:
+            "Update GitHub CLI and run `gh pr list`, then try finishing again.",
+        },
+      };
+      const message = unverifiedMessage[evidence.reason];
+      violations.push(
+        violation(rule, message.evidence, message.recovery, "warn"),
+      );
+      continue;
+    }
+
     if (rule.type === "blast-radius" && diffStats) {
       const changedLines = diffStats.added + diffStats.deleted;
       const acknowledged = receipts.some(
@@ -466,6 +567,7 @@ export function evaluatePolicy(options: {
   diffStats?: DiffStats;
   addedCommentBlocks?: AddedCommentBlock[];
   addedCommentStats?: AddedCommentStats[];
+  githubPrEvidence?: GithubPrEvidence;
 }): PolicyDecision {
   const violations =
     options.event.stage === "pre-tool"
@@ -477,6 +579,7 @@ export function evaluatePolicy(options: {
             options.diffStats,
             options.addedCommentBlocks,
             options.addedCommentStats,
+            options.githubPrEvidence,
           )
         : evaluatePostTool(options.policy, options.event, options.receipts);
 

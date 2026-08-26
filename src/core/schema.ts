@@ -74,6 +74,11 @@ const verificationEvidenceRuleSchema = z.object({
   commandPatterns: z.array(regexPatternSchema).min(1),
 });
 
+const readyGithubPrRuleSchema = z.object({
+  ...ruleBase,
+  type: z.literal("require-ready-github-pr"),
+});
+
 const commentQualityRuleSchema = z.object({
   ...ruleBase,
   type: z.literal("comment-quality"),
@@ -100,6 +105,7 @@ export const policyRuleSchema = z.discriminatedUnion("type", [
   localTestingRuleSchema,
   blastRadiusRuleSchema,
   verificationEvidenceRuleSchema,
+  readyGithubPrRuleSchema,
   commentQualityRuleSchema,
   metaComplianceRuleSchema,
   advisoryRuleSchema,
