@@ -1,5 +1,9 @@
 import process from "node:process";
 import {
+  genericHookErrorOutput,
+  genericHookStage,
+} from "../adapters/generic.js";
+import {
   formatAgentOutput,
   nativeEventName,
   normalizeAgentEvent,
@@ -31,7 +35,7 @@ import type {
   PolicyRule,
   Receipt,
 } from "../core/schema.js";
-import type { SupportedAgentName } from "../core/agents.js";
+import type { HookAgentName } from "../core/agents.js";
 import {
   loadEnforcementPolicy,
   loadUserPolicy,
@@ -85,11 +89,17 @@ function isNativeStopEvent(eventName: string | undefined): boolean {
 }
 
 function hookErrorOutput(
-  agent: SupportedAgentName,
+  agent: HookAgentName,
   event: NormalizedHookEvent | undefined,
   nativeEventName: string | undefined,
   message: string,
 ): Record<string, unknown> {
+  if (agent === "generic") {
+    return genericHookErrorOutput(
+      message,
+      event?.stage ?? genericHookStage(nativeEventName),
+    );
+  }
   const detail = `Codecut could not check this action: ${message}`;
   const recovery =
     "Repair Codecut state, then run `codecut status` and `codecut test`.";
@@ -260,7 +270,7 @@ async function inspectPrePushLint(
 }
 
 export async function runHook(
-  agent: SupportedAgentName,
+  agent: HookAgentName,
   options: { userLevel?: boolean } = {},
 ): Promise<void> {
   let nativeName: string | undefined;
@@ -272,7 +282,7 @@ export async function runHook(
     event = normalizeAgentEvent(agent, parsedInput);
     const proceed = (): void => {
       process.stdout.write(
-        `${JSON.stringify(proceedOutput(agent, nativeName))}\n`,
+        `${JSON.stringify(proceedOutput(agent, nativeName, event))}\n`,
       );
     };
 
@@ -284,6 +294,7 @@ export async function runHook(
     if (projectRoot) {
       if (
         options.userLevel &&
+        agent !== "generic" &&
         (await hasProjectHooks(projectRoot, agent, event.stage))
       ) {
         // The project's own hooks enforce here; a user-level hook running
@@ -395,7 +406,9 @@ export async function runHook(
     await appendReceipts(eventsFile, acknowledgements);
     receipts = [...receipts, ...acknowledgements];
     if (event.stage === "agent-response") {
-      process.stdout.write(`${JSON.stringify(proceedOutput(agent, nativeName))}\n`);
+      process.stdout.write(
+        `${JSON.stringify(proceedOutput(agent, nativeName, event))}\n`,
+      );
       return;
     }
     const decision = evaluatePolicy({
@@ -417,7 +430,8 @@ export async function runHook(
     const outputEvent =
       (agent === "polytoken" ||
         agent === "opencode" ||
-        agent === "devin") &&
+        agent === "devin" ||
+        agent === "generic") &&
       warningAlreadySent
         ? { ...event, stopHookActive: true }
         : event;
@@ -433,7 +447,10 @@ export async function runHook(
             ? event.stage === "pre-tool"
               ? false
               : true
-        : undefined;
+            : decision.outcome === "warn" && agent === "generic"
+              ? typeof output.message === "string" &&
+                output.message.trim().length > 0
+              : undefined;
     await appendReceipts(eventsFile, [
       decisionReceipt(event, decision, new Date(), warningDelivered),
     ]);

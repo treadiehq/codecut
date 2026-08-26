@@ -1,4 +1,4 @@
-import type { SupportedAgentName } from "../core/agents.js";
+import type { HookAgentName } from "../core/agents.js";
 import type {
   NormalizedHookEvent,
   PolicyDecision,
@@ -31,13 +31,22 @@ import {
   polytokenEventName,
   polytokenProceedOutput,
 } from "./polytoken.js";
+import {
+  formatGenericOutput,
+  genericEventName,
+  genericProceedOutput,
+  normalizeGenericEvent,
+} from "./generic.js";
 
 type JsonRecord = Record<string, unknown>;
 
 export function nativeEventName(
-  agent: SupportedAgentName,
+  agent: HookAgentName,
   raw: unknown,
 ): string | undefined {
+  if (agent === "generic") {
+    return genericEventName(raw);
+  }
   if (agent === "opencode") {
     return openCodeEventName(raw);
   }
@@ -53,7 +62,7 @@ export function nativeEventName(
 }
 
 export function normalizeAgentEvent(
-  agent: SupportedAgentName,
+  agent: HookAgentName,
   raw: unknown,
 ): NormalizedHookEvent {
   switch (agent) {
@@ -69,13 +78,19 @@ export function normalizeAgentEvent(
       return normalizeOpenCodeEvent(raw);
     case "polytoken":
       return normalizePolytokenEvent(raw);
+    case "generic":
+      return normalizeGenericEvent(raw);
   }
 }
 
 export function proceedOutput(
-  agent: SupportedAgentName,
+  agent: HookAgentName,
   eventName?: string,
+  event?: NormalizedHookEvent,
 ): JsonRecord {
+  if (agent === "generic") {
+    return genericProceedOutput(event);
+  }
   if (agent === "polytoken") {
     return polytokenProceedOutput(eventName);
   }
@@ -86,7 +101,7 @@ export function proceedOutput(
 }
 
 export function formatAgentOutput(
-  agent: SupportedAgentName,
+  agent: HookAgentName,
   event: NormalizedHookEvent,
   decision: PolicyDecision,
 ): JsonRecord {
@@ -103,5 +118,7 @@ export function formatAgentOutput(
       return formatOpenCodeOutput(event, decision);
     case "polytoken":
       return formatPolytokenOutput(event, decision);
+    case "generic":
+      return formatGenericOutput(event, decision);
   }
 }

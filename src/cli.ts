@@ -16,9 +16,13 @@ import {
 import { formatPolicyTests, testPolicy } from "./commands/test.js";
 import { compareVersions, updateCodecut } from "./commands/update.js";
 import { setupUserRules } from "./commands/user.js";
+import { genericHookProtocolDocument } from "./adapters/generic.js";
 import {
+  hookAgentNames,
+  isHookAgentName,
   isSupportedAgentName,
   supportedAgentNames,
+  type HookAgentName,
   type SupportedAgentName,
 } from "./core/agents.js";
 import { displayPath } from "./core/user.js";
@@ -47,6 +51,16 @@ function agent(value: string): SupportedAgentName {
   if (!isSupportedAgentName(normalized)) {
     throw new Error(
       `Unsupported agent "${value}". Use ${supportedAgentNames()}.`,
+    );
+  }
+  return normalized;
+}
+
+function hookAgent(value: string): HookAgentName {
+  const normalized = value.toLowerCase();
+  if (!isHookAgentName(normalized)) {
+    throw new Error(
+      `Unsupported hook agent "${value}". Use ${hookAgentNames()}.`,
     );
   }
   return normalized;
@@ -488,11 +502,20 @@ Examples:
 
 program
   .command("hook")
-  .description("Read one agent hook event from stdin")
-  .option("--agent <agent>", "agent sending the event", "claude")
+  .description("Read one platform or generic agent hook event from stdin")
+  .option(
+    "--agent <agent>",
+    `agent sending the event: ${hookAgentNames()}`,
+    "claude",
+  )
   .option(
     "--user",
     "run as a user-level hook; defers to project hooks when present",
+    false,
+  )
+  .option(
+    "--schema",
+    "print the generic hook protocol schemas instead of reading stdin",
     false,
   )
   .addHelpText(
@@ -501,10 +524,29 @@ program
 Example:
   printf '%s' '{"hook_event_name":"Stop","session_id":"demo","cwd":"."}' |
     codecut hook --agent claude
+
+  printf '%s' '{"protocol":"codecut.agent-hook","version":1,"event":"stop","session_id":"demo","cwd":"."}' |
+    codecut hook --agent generic
+
+  codecut hook --agent generic --schema
 `,
   )
-  .action(async (options: { agent: string; user: boolean }) => {
-    await runHook(agent(options.agent), { userLevel: options.user });
+  .action(async (options: {
+    agent: string;
+    user: boolean;
+    schema: boolean;
+  }) => {
+    const selectedAgent = hookAgent(options.agent);
+    if (options.schema) {
+      if (selectedAgent !== "generic") {
+        throw new Error("--schema is only available with --agent generic.");
+      }
+      process.stdout.write(
+        `${JSON.stringify(genericHookProtocolDocument, null, 2)}\n`,
+      );
+      return;
+    }
+    await runHook(selectedAgent, { userLevel: options.user });
   });
 
 program.parseAsync(process.argv).catch((error: unknown) => {

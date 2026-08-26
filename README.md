@@ -201,6 +201,67 @@ There is no separate `--agent t3code` mode. For a remote OpenCode server, instal
 the user-level OpenCode plugin on the server machine; project plugins work when
 the T3 Code provider runs OpenCode against the local project.
 
+### Custom agents
+
+Private and unsupported agents can use Codecut through the versioned generic
+hook protocol. No Codecut-specific SDK or native installer is required: send
+one JSON event on stdin and read one JSON decision from stdout.
+
+```sh
+printf '%s' '{
+  "protocol": "codecut.agent-hook",
+  "version": 1,
+  "event": "pre-tool",
+  "session_id": "session-123",
+  "cwd": "/workspace/project",
+  "agent_name": "company-agent",
+  "tool": {
+    "name": "shell",
+    "call_id": "call-456",
+    "input": { "command": "git push" }
+  }
+}' | codecut hook --agent generic
+```
+
+The response always uses the same envelope:
+
+```json
+{
+  "protocol": "codecut.agent-hook",
+  "version": 1,
+  "action": "deny",
+  "outcome": "block",
+  "summary": "1 rule checked · 1 issue",
+  "message": "Codecut found 1 issue...",
+  "violations": [
+    {
+      "directive": "Require clean Codecut lint for git push",
+      "severity": "block",
+      "evidence": "1 Codecut lint finding remains...",
+      "recovery": "Run codecut lint, fix every finding, then retry git push."
+    }
+  ]
+}
+```
+
+Call the protocol at `pre-tool`, `post-tool`, `post-tool-failure`, `stop`,
+`agent-response`, and `context-reset` lifecycle boundaries. Keep
+`session_id` stable and reuse `tool.call_id` before and after a tool call. The
+`outcome` reports the policy result; the `action` tells the host what to do:
+pre-tool events return `allow` or `deny`, post-tool events return
+`acknowledge`, and stop events return `continue` or `stop`. A custom agent must
+expose these lifecycle boundaries and honor `action` for enforcement to work.
+
+`generic` is a hook-only integration. Native setup and hook installation
+commands intentionally do not accept `--agent generic`; custom agents invoke
+the protocol command directly.
+
+Print the authoritative input and output JSON Schemas with:
+
+```sh
+codecut hook --agent generic --schema
+```
+
 ```sh
 codecut status  # Show active rules and hook health
 codecut test    # Check that the rules work

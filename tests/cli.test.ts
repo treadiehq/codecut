@@ -282,6 +282,268 @@ describe("hook error enforcement", () => {
   });
 });
 
+describe("generic agent hook protocol", () => {
+  it("blocks a custom agent through the canonical JSON contract", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-generic-hook-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [
+          {
+            text: "Use local machines for testing",
+            source: {
+              path: "AGENTS.md",
+              line: 1,
+              scope: "project",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "unknown",
+        acceptBlockingRules: true,
+      }),
+    );
+
+    const runHook = (input: Record<string, unknown>) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "generic",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify(input),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+
+    const blocked = runHook({
+      protocol: "codecut.agent-hook",
+      version: 1,
+      event: "pre-tool",
+      session_id: "custom-session",
+      cwd: projectRoot,
+      agent_name: "company-agent",
+      tool: {
+        name: "shell",
+        call_id: "call-1",
+        input: { command: "ssh runner npm test" },
+      },
+    });
+    expect(blocked.status, blocked.stderr).toBe(0);
+    expect(JSON.parse(blocked.stdout)).toMatchObject({
+      protocol: "codecut.agent-hook",
+      version: 1,
+      agent_name: "company-agent",
+      action: "deny",
+      outcome: "block",
+      message: expect.stringContaining("Run the test locally"),
+      violations: [
+        expect.objectContaining({
+          severity: "block",
+          recovery: "Run the test locally instead.",
+        }),
+      ],
+    });
+
+    const invalid = runHook({
+      protocol: "codecut.agent-hook",
+      version: 2,
+      event: "stop",
+      session_id: "custom-session",
+      cwd: projectRoot,
+    });
+    expect(invalid.status).toBe(0);
+    expect(JSON.parse(invalid.stdout)).toMatchObject({
+      protocol: "codecut.agent-hook",
+      version: 1,
+      action: "continue",
+      outcome: "block",
+      error: { code: "invalid-event" },
+    });
+    expect(invalid.stderr).toContain("Codecut hook error");
+  });
+
+  it("prints machine-readable generic protocol schemas", () => {
+    const repositoryRoot = process.cwd();
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(repositoryRoot, "src", "cli.ts"),
+        "hook",
+        "--agent",
+        "generic",
+        "--schema",
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      protocol: "codecut.agent-hook",
+      version: 1,
+      inputSchema: {
+        title: "Codecut generic agent hook input",
+      },
+      outputSchema: {
+        title: "Codecut generic agent hook output",
+      },
+    });
+  });
+
+  it("returns stop when no policy requires more work", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-generic-empty-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    await writePolicy(projectRoot, {
+      ...compilePolicy({
+        directives: [],
+        sources: [],
+        agent: "unknown",
+        acceptBlockingRules: true,
+      }),
+      rules: [],
+    });
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(repositoryRoot, "src", "cli.ts"),
+        "hook",
+        "--agent",
+        "generic",
+      ],
+      {
+        cwd: repositoryRoot,
+        input: JSON.stringify({
+          protocol: "codecut.agent-hook",
+          version: 1,
+          event: "stop",
+          session_id: "custom-session",
+          cwd: projectRoot,
+        }),
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+        },
+      },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      action: "stop",
+      outcome: "allow",
+    });
+  });
+
+  it("continues once for a stop warning without looping forever", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-generic-warning-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const policy = compilePolicy({
+      directives: [],
+      sources: [],
+      agent: "unknown",
+      acceptBlockingRules: true,
+    });
+    await writePolicy(projectRoot, {
+      ...policy,
+      rules: policy.rules.filter(
+        (rule) => rule.type === "verification-evidence",
+      ),
+    });
+    const runStop = () =>
+      spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "generic",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify({
+            protocol: "codecut.agent-hook",
+            version: 1,
+            event: "stop",
+            session_id: "warning-session",
+            cwd: projectRoot,
+          }),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+
+    const first = runStop();
+    expect(first.status, first.stderr).toBe(0);
+    expect(JSON.parse(first.stdout)).toMatchObject({
+      action: "continue",
+      outcome: "warn",
+    });
+
+    const repeated = runStop();
+    expect(repeated.status, repeated.stderr).toBe(0);
+    expect(JSON.parse(repeated.stdout)).toMatchObject({
+      action: "stop",
+      outcome: "warn",
+    });
+  });
+
+  it("does not make generic a native setup target", () => {
+    const repositoryRoot = process.cwd();
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        path.join(repositoryRoot, "src", "cli.ts"),
+        "status",
+        "--agent",
+        "generic",
+      ],
+      {
+        cwd: repositoryRoot,
+        encoding: "utf8",
+      },
+    );
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("Unsupported agent");
+    expect(result.stderr).not.toContain("generic,");
+  });
+});
+
 describe("GitHub PR completion gate", () => {
   it("asks Cursor to mark a draft PR ready before completion", async () => {
     const repositoryRoot = process.cwd();

@@ -152,6 +152,7 @@ export type HookStage = z.infer<typeof hookStageSchema>;
 
 export const normalizedHookEventSchema = z.object({
   agent: agentNameSchema,
+  integrationName: z.string().min(1).max(64).optional(),
   stage: hookStageSchema,
   sessionId: z.string().min(1),
   cwd: z.string().min(1),
