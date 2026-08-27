@@ -272,4 +272,18 @@ describe("working-tree fingerprints", () => {
     expect(second).not.toBe(first);
     expect(withState).toBe(second);
   });
+
+  it("skips fingerprints for oversized non-Git directories", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-large-filesystem-state-"),
+    );
+    temporaryDirectories.push(directory);
+    await Promise.all(
+      Array.from({ length: 257 }, (_, index) =>
+        writeFile(path.join(directory, `file-${index}.txt`), `${index}\n`),
+      ),
+    );
+
+    await expect(workingTreeFingerprint(directory)).resolves.toBeUndefined();
+  });
 });
