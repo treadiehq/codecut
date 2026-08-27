@@ -36,6 +36,12 @@ const FINGERPRINT_SKIPPED_DIRECTORIES = new Set([
   ".git",
   "node_modules",
 ]);
+// A non-Git directory has no tracked-file boundary. Keep its best-effort
+// fingerprint useful for small project directories without allowing a hook to
+// recursively hash an entire workspace containing several repositories.
+const FILESYSTEM_FINGERPRINT_MAX_FILES = 256;
+const FILESYSTEM_FINGERPRINT_MAX_DIRECTORIES = 512;
+const FILESYSTEM_FINGERPRINT_MAX_BYTES = 16 * 1024 * 1024;
 
 async function git(
   cwd: string,
@@ -56,9 +62,16 @@ async function git(
 
 async function filesystemState(
   cwd: string,
-): Promise<{ fingerprint: string; paths: string[]; git: boolean }> {
+): Promise<{ fingerprint: string | undefined; paths: string[]; git: boolean }> {
   const paths: string[] = [];
-  const visit = async (directory: string): Promise<void> => {
+  let directoryCount = 0;
+  let byteCount = 0;
+  const visit = async (directory: string): Promise<boolean> => {
+    directoryCount += 1;
+    if (directoryCount > FILESYSTEM_FINGERPRINT_MAX_DIRECTORIES) {
+      return false;
+    }
+
     const entries = await readdir(directory, { withFileTypes: true });
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
@@ -71,13 +84,35 @@ async function filesystemState(
       const absolutePath = path.join(directory, entry.name);
       const relativePath = path.relative(cwd, absolutePath);
       if (entry.isDirectory()) {
-        await visit(absolutePath);
-      } else {
-        paths.push(relativePath);
+        if (!(await visit(absolutePath))) {
+          return false;
+        }
+        continue;
+      }
+
+      paths.push(relativePath);
+      if (paths.length > FILESYSTEM_FINGERPRINT_MAX_FILES) {
+        return false;
+      }
+      try {
+        byteCount += (await lstat(absolutePath)).size;
+      } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+          continue;
+        }
+        throw error;
+      }
+      if (byteCount > FILESYSTEM_FINGERPRINT_MAX_BYTES) {
+        return false;
       }
     }
+    return true;
   };
-  await visit(cwd);
+
+  if (!(await visit(cwd))) {
+    return { fingerprint: undefined, paths: [], git: false };
+  }
+
   const hash = createHash("sha256");
   hash.update("filesystem\0");
   for (const filePath of paths) {
@@ -143,7 +178,7 @@ async function hashPath(
 
 async function workingTreeState(
   cwd: string,
-): Promise<{ fingerprint: string; paths: string[]; git: boolean }> {
+): Promise<{ fingerprint: string | undefined; paths: string[]; git: boolean }> {
   const projectRoot = await realpath(cwd);
   const gitRoot = (
     await git(projectRoot, ["rev-parse", "--show-toplevel"])
