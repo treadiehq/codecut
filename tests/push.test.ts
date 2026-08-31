@@ -27,6 +27,7 @@ describe("git push command detection", () => {
     "npm test && git push --force-with-lease",
     "env CI=1 command git -c push.default=current push origin HEAD",
     "/usr/bin/git -C ./nested push -u origin HEAD",
+    "git --git-dir=/repo/.git push",
     "cd nested && git push",
   ])("recognizes a push command: %s", (command) => {
     expect(isGitPushCommand(command)).toBe(true);
@@ -37,6 +38,9 @@ describe("git push command detection", () => {
     "echo git push",
     'printf "%s" "git push"',
     "git commit -m 'mention git push'",
+    "git commit -m push",
+    "git stash push",
+    "git stash push -m wip",
   ])("does not mistake text for a push command: %s", (command) => {
     expect(isGitPushCommand(command)).toBe(false);
   });
@@ -68,6 +72,30 @@ describe("outgoing push inspection", () => {
       range: `${base}..${head}`,
     });
   });
+
+  it.each(["--force", "--force-with-lease", "--verbose", "--quiet"])(
+    "keeps ordinary forward-push option %s lintable",
+    async (option) => {
+      const inspect = runner({
+        "rev-parse --show-toplevel": "/repo\n",
+        "rev-parse --verify HEAD": `${head}\n`,
+        "branch --show-current": "feature/example\n",
+        "config --get branch.feature/example.remote": "origin\n",
+        "rev-parse --abbrev-ref --symbolic-full-name @{upstream}":
+          "origin/feature/example\n",
+        "rev-parse --verify --quiet refs/remotes/origin/feature/example^{commit}":
+          `${base}\n`,
+      });
+
+      await expect(
+        inspectOutgoingPush(`git push ${option}`, "/repo", inspect),
+      ).resolves.toMatchObject({
+        status: "ready",
+        branch: "feature/example",
+        destination: "feature/example",
+      });
+    },
+  );
 
   it("falls back to the remote default branch for a new branch", async () => {
     const missing = Object.assign(new Error("missing ref"), { code: 1 });
@@ -112,7 +140,42 @@ describe("outgoing push inspection", () => {
       status: "unverified",
       reason: "unsupported-command",
     });
+    await expect(
+      inspectOutgoingPush(
+        "git --git-dir=/repo/.git push",
+        "/repo",
+        unused,
+      ),
+    ).resolves.toEqual({
+      status: "unverified",
+      reason: "unsupported-command",
+    });
   });
+
+  it.each(["git stash push", "git stash push -m wip", "git commit -m push"])(
+    "ignores non-push command: %s",
+    async (command) => {
+      await expect(
+        inspectOutgoingPush(command, "/repo", runner({})),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it.each(["-d", "--del", "--dele", "--delet", "--delete"])(
+    "marks delete option %s unverified",
+    async (option) => {
+      await expect(
+        inspectOutgoingPush(
+          `git push ${option} origin feature`,
+          "/repo",
+          runner({}),
+        ),
+      ).resolves.toEqual({
+        status: "unverified",
+        reason: "unsupported-command",
+      });
+    },
+  );
 
   it("reports a bounded Git timeout", async () => {
     const timeout = Object.assign(new Error("timed out"), {

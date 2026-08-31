@@ -360,13 +360,17 @@ function evaluateStop(
   const commandsAfterEdit = receipts.filter(
     (receipt) => receipt.kind === "command" && after(receipt, latestEdit),
   );
+  const verificationFreshnessUnavailable =
+    hasChanges && diffStats?.fingerprint === undefined;
   const commandsForCurrentState = diffStats?.fingerprint
     ? commandsAfterEdit.filter(
         (receipt) =>
           receipt.stateFingerprint === diffStats.fingerprint &&
           receipt.stateBeforeFingerprint === receipt.stateFingerprint,
       )
-    : commandsAfterEdit;
+    : hasChanges
+      ? []
+      : commandsAfterEdit;
 
   for (const rule of policy.rules) {
     if (!rule.enabled || rule.mode === "off") {
@@ -383,7 +387,9 @@ function evaluateStop(
         violations.push(
           violation(
             rule,
-            latestTest
+            verificationFreshnessUnavailable
+              ? "Codecut could not fingerprint the current changes, so it cannot verify that the latest test is fresh."
+              : latestTest
               ? "The latest test failed after the last change."
               : "No passing test was found after the last change.",
             "Run the relevant unit tests and make sure they pass.",
@@ -426,7 +432,9 @@ function evaluateStop(
         violations.push(
           violation(
             rule,
-            latestTest
+            verificationFreshnessUnavailable
+              ? "Codecut could not fingerprint the current changes, so it cannot verify that the latest test ran locally."
+              : latestTest
               ? `The latest test ran at ${latestTest.location ?? "an unknown location"}, not locally.`
               : "No local test was found after the last change.",
             "Run the relevant tests locally.",
@@ -448,7 +456,9 @@ function evaluateStop(
         violations.push(
           violation(
             rule,
-            latestVerification
+            verificationFreshnessUnavailable
+              ? "Codecut could not fingerprint the current changes, so it cannot verify that the latest check is fresh."
+              : latestVerification
               ? "The latest check failed."
               : "No successful test, lint, typecheck, or build was found after the last change.",
             "Run a test, lint, typecheck, or build successfully and cite the result.",

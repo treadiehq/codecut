@@ -89,6 +89,22 @@ function verification(
   };
 }
 
+const CURRENT_FINGERPRINT = "sha256:2222222222222222";
+
+function currentVerification(
+  overrides: Partial<Receipt> = {},
+  timestamp = "2026-01-01T00:00:02.000Z",
+): Receipt {
+  return verification(
+    {
+      stateBeforeFingerprint: CURRENT_FINGERPRINT,
+      stateFingerprint: CURRENT_FINGERPRINT,
+      ...overrides,
+    },
+    timestamp,
+  );
+}
+
 describe("starter policy compilation", () => {
   it("uses clear starter rules with the intended checks", () => {
     const compiled = compilePolicy({
@@ -736,12 +752,23 @@ describe("starter policy enforcement", () => {
       testRuleIds: [localRule.id],
       location: "local",
     });
+    const currentReceipts = receipts.map((receipt) => ({
+      ...receipt,
+      stateBeforeFingerprint: CURRENT_FINGERPRINT,
+      stateFingerprint: CURRENT_FINGERPRINT,
+    }));
     expect(
       evaluatePolicy({
         policy: localOnlyPolicy,
         event: hookEvent("stop"),
-        receipts: [edit(), ...receipts],
-        diffStats: { files: 1, added: 1, deleted: 0, complete: true },
+        receipts: [edit(), ...currentReceipts],
+        diffStats: {
+          files: 1,
+          added: 1,
+          deleted: 0,
+          complete: true,
+          fingerprint: CURRENT_FINGERPRINT,
+        },
       }).outcome,
     ).toBe("allow");
   });
@@ -790,8 +817,21 @@ describe("starter policy enforcement", () => {
     const decision = evaluatePolicy({
       policy: customPolicy,
       event: hookEvent("stop"),
-      receipts: [edit(), ...receipts],
-      diffStats: { files: 1, added: 1, deleted: 0, complete: true },
+      receipts: [
+        edit(),
+        ...receipts.map((receipt) => ({
+          ...receipt,
+          stateBeforeFingerprint: CURRENT_FINGERPRINT,
+          stateFingerprint: CURRENT_FINGERPRINT,
+        })),
+      ],
+      diffStats: {
+        files: 1,
+        added: 1,
+        deleted: 0,
+        complete: true,
+        fingerprint: CURRENT_FINGERPRINT,
+      },
     });
 
     expect(receipts[0]?.testRuleIds).toEqual([localRule.id]);
@@ -818,8 +858,14 @@ describe("starter policy enforcement", () => {
     const decision = evaluatePolicy({
       policy: policy(),
       event: hookEvent("stop"),
-      receipts: [edit(), verification()],
-      diffStats: { files: 1, added: 4, deleted: 0, complete: true },
+      receipts: [edit(), currentVerification()],
+      diffStats: {
+        files: 1,
+        added: 4,
+        deleted: 0,
+        complete: true,
+        fingerprint: CURRENT_FINGERPRINT,
+      },
     });
 
     expect(decision.outcome).toBe("allow");
@@ -997,12 +1043,13 @@ describe("starter policy enforcement", () => {
     const decision = evaluatePolicy({
       policy: activePolicy,
       event: hookEvent("stop"),
-      receipts: [edit(), verification()],
+      receipts: [edit(), currentVerification()],
       diffStats: {
         files: blastRule.maxFiles + 1,
         added: blastRule.maxChangedLines + 1,
         deleted: 0,
         complete: true,
+        fingerprint: CURRENT_FINGERPRINT,
       },
     });
 
@@ -1024,12 +1071,13 @@ describe("starter policy enforcement", () => {
     const decision = evaluatePolicy({
       policy: activePolicy,
       event: hookEvent("stop"),
-      receipts: [edit(), verification()],
+      receipts: [edit(), currentVerification()],
       diffStats: {
         files: 1,
         added: 0,
         deleted: 0,
         complete: false,
+        fingerprint: CURRENT_FINGERPRINT,
       },
     });
 
@@ -1210,6 +1258,32 @@ describe("starter policy enforcement", () => {
     expect(unmatchedCompletion.outcome).toBe("block");
   });
 
+  it("does not trust verification when change freshness is unavailable", () => {
+    const decision = evaluatePolicy({
+      policy: policy(),
+      event: hookEvent("stop"),
+      receipts: [
+        verification({
+          stateBeforeFingerprint: "sha256:1111111111111111",
+          stateFingerprint: "sha256:1111111111111111",
+        }),
+      ],
+      diffStats: {
+        files: 1,
+        added: 1,
+        deleted: 0,
+        complete: true,
+      },
+    });
+
+    expect(decision.outcome).toBe("block");
+    expect(
+      decision.violations.find(
+        (violation) => violation.directive === "All unit tests must pass",
+      )?.evidence,
+    ).toContain("could not fingerprint");
+  });
+
   it("trusts a clean complete diff despite an ambiguous command start", () => {
     const ambiguousVerification = verification({
       stateFingerprint: "sha256:2222222222222222",
@@ -1266,8 +1340,8 @@ describe("starter policy enforcement", () => {
       event: hookEvent("stop"),
       receipts: [
         edit(),
-        verification({}, "2026-01-01T00:00:02.000Z"),
-        verification(
+        currentVerification({}, "2026-01-01T00:00:02.000Z"),
+        currentVerification(
           {
             id: "failed-lint",
             command: "npm run lint",
@@ -1278,7 +1352,13 @@ describe("starter policy enforcement", () => {
           "2026-01-01T00:00:03.000Z",
         ),
       ],
-      diffStats: { files: 1, added: 4, deleted: 0, complete: true },
+      diffStats: {
+        files: 1,
+        added: 4,
+        deleted: 0,
+        complete: true,
+        fingerprint: CURRENT_FINGERPRINT,
+      },
     });
 
     expect(decision.outcome).toBe("warn");

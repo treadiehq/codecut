@@ -448,7 +448,8 @@ export async function runHook(
               ? false
               : true
             : decision.outcome === "warn" && agent === "generic"
-              ? typeof output.message === "string" &&
+              ? output.action === "continue" &&
+                typeof output.message === "string" &&
                 output.message.trim().length > 0
               : undefined;
     await appendReceipts(eventsFile, [

@@ -25,6 +25,7 @@ type TestResult = {
 const EDIT_TIME = "2026-01-01T00:00:00.000Z";
 const COMMAND_TIME = "2026-01-01T00:00:01.000Z";
 const STOP_TIME = "2026-01-01T00:00:02.000Z";
+const TEST_FINGERPRINT = "sha256:0000000000000000";
 
 function event(
   stage: NormalizedHookEvent["stage"],
@@ -67,6 +68,8 @@ function commandReceipt(overrides: Partial<Receipt>): Receipt {
     isVerification: true,
     location: "local",
     warningCount: 0,
+    stateBeforeFingerprint: TEST_FINGERPRINT,
+    stateFingerprint: TEST_FINGERPRINT,
     ...overrides,
   };
 }
@@ -94,6 +97,13 @@ function fixtureFor(rule: PolicyRule): {
           editReceipt(),
           commandReceipt({ success: false, warningCount: 0 }),
         ],
+        diffStats: {
+          files: 1,
+          added: 10,
+          deleted: 0,
+          complete: true,
+          fingerprint: TEST_FINGERPRINT,
+        },
       };
     case "warnings-as-errors":
       return {
@@ -102,6 +112,13 @@ function fixtureFor(rule: PolicyRule): {
           editReceipt(),
           commandReceipt({ success: true, warningCount: 1 }),
         ],
+        diffStats: {
+          files: 1,
+          added: 10,
+          deleted: 0,
+          complete: true,
+          fingerprint: TEST_FINGERPRINT,
+        },
       };
     case "blast-radius":
       return {
@@ -112,12 +129,20 @@ function fixtureFor(rule: PolicyRule): {
           added: rule.maxChangedLines + 1,
           deleted: 0,
           complete: true,
+          fingerprint: TEST_FINGERPRINT,
         },
       };
     case "verification-evidence":
       return {
         hookEvent: event("stop"),
         receipts: [editReceipt()],
+        diffStats: {
+          files: 1,
+          added: 10,
+          deleted: 0,
+          complete: true,
+          fingerprint: TEST_FINGERPRINT,
+        },
       };
     case "comment-quality":
       return {

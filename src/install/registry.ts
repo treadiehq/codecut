@@ -237,7 +237,7 @@ export async function installUserAgentHooks(
       });
     case "devin":
       return installDevinHooks(homeDirectory, {
-        command: "codecut hook --agent devin --user",
+        command: userHookCommand("devin"),
         userLevel: true,
         settingsPath: userHookSettingsPath(homeDirectory, "devin"),
       });

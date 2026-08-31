@@ -378,6 +378,97 @@ describe("generic agent hook protocol", () => {
     expect(invalid.stderr).toContain("Codecut hook error");
   });
 
+  it("does not suppress the first stop warning after a pre-tool advisory", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-generic-advisory-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    await writeFile(
+      path.join(projectRoot, "source.ts"),
+      "export const changed = true;\n",
+    );
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [
+          {
+            text: "Use local machines for testing",
+            source: {
+              path: "AGENTS.md",
+              line: 1,
+              scope: "project",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "unknown",
+        acceptBlockingRules: false,
+      }),
+    );
+
+    const runHook = (input: Record<string, unknown>) =>
+      spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "generic",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify(input),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+    const baseInput = {
+      protocol: "codecut.agent-hook",
+      version: 1,
+      session_id: "advisory-session",
+      cwd: projectRoot,
+      agent_name: "company-agent",
+    };
+
+    const preTool = runHook({
+      ...baseInput,
+      event: "pre-tool",
+      tool: {
+        name: "shell",
+        call_id: "call-1",
+        input: { command: "ssh runner npm test" },
+      },
+    });
+    expect(preTool.status, preTool.stderr).toBe(0);
+    expect(JSON.parse(preTool.stdout)).toMatchObject({
+      action: "allow",
+      outcome: "warn",
+      message: expect.stringContaining("Run the test locally"),
+    });
+
+    const firstStop = runHook({ ...baseInput, event: "stop" });
+    expect(firstStop.status, firstStop.stderr).toBe(0);
+    expect(JSON.parse(firstStop.stdout)).toMatchObject({
+      action: "continue",
+      outcome: "warn",
+      message: expect.stringContaining("Run the relevant tests locally"),
+    });
+
+    const repeatedStop = runHook({ ...baseInput, event: "stop" });
+    expect(repeatedStop.status, repeatedStop.stderr).toBe(0);
+    expect(JSON.parse(repeatedStop.stdout)).toMatchObject({
+      action: "stop",
+      outcome: "warn",
+    });
+  });
+
   it("prints machine-readable generic protocol schemas", () => {
     const repositoryRoot = process.cwd();
     const result = spawnSync(

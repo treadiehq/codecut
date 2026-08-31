@@ -16,6 +16,10 @@ import {
 } from "./comment-density.js";
 import { groupCommentBlocks, scanComments } from "./comments.js";
 import { parseUnifiedDiff } from "./diff.js";
+import {
+  isCodecutManagedGeneratedFile,
+  isCodecutManagedGeneratedPath,
+} from "./managed-files.js";
 import type { DiffStats, Receipt } from "./schema.js";
 
 export type AddedCommentBlock = {
@@ -36,23 +40,45 @@ const FINGERPRINT_SKIPPED_DIRECTORIES = new Set([
   ".git",
   "node_modules",
 ]);
+
+async function isManagedGeneratedProjectFile(
+  projectRoot: string,
+  relativePath: string,
+): Promise<boolean> {
+  if (!isCodecutManagedGeneratedPath(relativePath)) {
+    return false;
+  }
+  try {
+    const source = await readFile(
+      path.resolve(projectRoot, relativePath),
+      "utf8",
+    );
+    return isCodecutManagedGeneratedFile(relativePath, source);
+  } catch {
+    return false;
+  }
+}
+
 // A non-Git directory has no tracked-file boundary. Keep its best-effort
 // fingerprint useful for small project directories without allowing a hook to
 // recursively hash an entire workspace containing several repositories.
 const FILESYSTEM_FINGERPRINT_MAX_FILES = 256;
 const FILESYSTEM_FINGERPRINT_MAX_DIRECTORIES = 512;
 const FILESYSTEM_FINGERPRINT_MAX_BYTES = 16 * 1024 * 1024;
+const GIT_DEFAULT_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
+const GIT_FILE_LIST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 async function git(
   cwd: string,
   args: string[],
+  maxBuffer = GIT_DEFAULT_MAX_BUFFER_BYTES,
 ): Promise<string | undefined> {
   try {
     const result = await execFileAsync("git", args, {
       cwd,
       encoding: "utf8",
       timeout: 3_000,
-      maxBuffer: 2 * 1024 * 1024,
+      maxBuffer,
     });
     return result.stdout;
   } catch {
@@ -204,18 +230,27 @@ async function workingTreeState(
   }
 
   const hash = createHash("sha256");
-  const listedFiles = await git(gitRoot, [
-    "ls-files",
-    "-z",
-    "--cached",
-    "--others",
-    "--exclude-standard",
-    "--",
-    pathspec,
-  ]);
+  const listedFiles = await git(
+    gitRoot,
+    [
+      "ls-files",
+      "-z",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "--",
+      pathspec,
+    ],
+    GIT_FILE_LIST_MAX_BUFFER_BYTES,
+  );
   if (listedFiles === undefined) {
     return filesystemState(cwd);
   }
+  const paths = changedPathsFromStatus(status).map((changedPath) =>
+    prefix && changedPath.startsWith(`${prefix}/`)
+      ? changedPath.slice(prefix.length + 1)
+      : changedPath,
+  );
   hash.update("git-files\0");
   const files = [...new Set(listedFiles.split("\0").filter(Boolean))]
     .filter((file) => {
@@ -239,6 +274,9 @@ async function workingTreeState(
         )?.trim();
         if (nestedRoot && path.resolve(nestedRoot) === absolutePath) {
           const nestedState = await workingTreeState(absolutePath);
+          if (nestedState.fingerprint === undefined) {
+            return { fingerprint: undefined, paths, git: true };
+          }
           hash.update(`nested\0${file}\0${nestedState.fingerprint}\0`);
           continue;
         }
@@ -251,11 +289,6 @@ async function workingTreeState(
     }
     await hashPath(hash, gitRoot, file);
   }
-  const paths = changedPathsFromStatus(status).map((changedPath) =>
-    prefix && changedPath.startsWith(`${prefix}/`)
-      ? changedPath.slice(prefix.length + 1)
-      : changedPath,
-  );
   return {
     fingerprint: `sha256:${hash.digest("hex").slice(0, 16)}`,
     paths,
@@ -301,14 +334,18 @@ async function listGitProjectFiles(
     .relative(gitRoot, projectRoot)
     .split(path.sep)
     .join("/");
-  const output = await git(gitRoot, [
-    "ls-files",
-    "-z",
-    ...modes,
-    "--exclude-standard",
-    "--",
-    prefix || ".",
-  ]);
+  const output = await git(
+    gitRoot,
+    [
+      "ls-files",
+      "-z",
+      ...modes,
+      "--exclude-standard",
+      "--",
+      prefix || ".",
+    ],
+    GIT_FILE_LIST_MAX_BUFFER_BYTES,
+  );
   if (output === undefined) {
     return undefined;
   }
@@ -458,6 +495,9 @@ export async function inspectAddedComments(
     if (!relativePath) {
       continue;
     }
+    if (await isManagedGeneratedProjectFile(projectRoot, relativePath)) {
+      continue;
+    }
     stats.push(measureAddedComments(relativePath, file.addedLines));
     blocks.push(
       ...groupCommentBlocks(scanComments(file.addedLines)).map((block) => ({
@@ -490,8 +530,11 @@ export async function inspectAddedComments(
     if (contents.includes(0)) {
       continue;
     }
-    const lines = contents
-      .toString("utf8")
+    const source = contents.toString("utf8");
+    if (isCodecutManagedGeneratedFile(relativePath, source)) {
+      continue;
+    }
+    const lines = source
       .split(/\r?\n/)
       .map((text, index) => ({ line: index + 1, text }));
     stats.push(measureAddedComments(relativePath, lines));

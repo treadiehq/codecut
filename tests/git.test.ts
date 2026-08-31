@@ -5,11 +5,16 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  aggregateCommentStats,
+  exceedsCommentPercentage,
+} from "../src/core/comment-density.js";
+import {
   inspectAddedCommentBlocks,
   inspectAddedComments,
   inspectDiff,
   workingTreeFingerprint,
 } from "../src/core/git.js";
+import { installOpenCodeHooks } from "../src/install/opencode.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -162,6 +167,55 @@ describe("working-tree fingerprints", () => {
     });
   });
 
+  it("excludes the generated OpenCode plugin from comment density", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-opencode-comments-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    await writeFile(path.join(directory, "README.md"), "# Example\n");
+    await execFileAsync("git", ["add", "README.md"], { cwd: directory });
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+      { cwd: directory },
+    );
+    await installOpenCodeHooks(directory);
+    await mkdir(path.join(directory, "src"), { recursive: true });
+    await writeFile(
+      path.join(directory, "src", "feature.js"),
+      [
+        ...Array.from({ length: 7 }, (_, index) => `// comment ${index}`),
+        ...Array.from(
+          { length: 18 },
+          (_, index) => `export const value${index} = ${index};`,
+        ),
+      ].join("\n"),
+    );
+
+    const inspected = await inspectAddedComments(directory);
+
+    expect(inspected.stats).toEqual([
+      { path: "src/feature.js", sourceLines: 25, commentLines: 7 },
+    ]);
+    expect(
+      exceedsCommentPercentage(
+        aggregateCommentStats(inspected.stats),
+        25,
+        20,
+      ),
+    ).toBe(true);
+  });
+
   it("tracks content when the policy root is below the Git root", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "codecut-nested-git-state-"),
@@ -284,6 +338,43 @@ describe("working-tree fingerprints", () => {
       ),
     );
 
+    await expect(workingTreeFingerprint(directory)).resolves.toBeUndefined();
+  });
+
+  it("propagates an unavailable nested repository fingerprint", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-nested-unknown-state-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    await writeFile(path.join(directory, "README.md"), "# Example\n");
+    await execFileAsync("git", ["add", "README.md"], { cwd: directory });
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+      { cwd: directory },
+    );
+
+    const nested = path.join(directory, "nested");
+    await mkdir(nested);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: nested });
+    await Promise.all(
+      Array.from({ length: 257 }, (_, index) =>
+        writeFile(path.join(nested, `file-${index}.txt`), `${index}\n`),
+      ),
+    );
+    await writeFile(path.join(nested, ".git", "index"), "invalid index");
+
+    await expect(workingTreeFingerprint(nested)).resolves.toBeUndefined();
     await expect(workingTreeFingerprint(directory)).resolves.toBeUndefined();
   });
 });

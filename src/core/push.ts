@@ -6,6 +6,18 @@ import type { LintCheck } from "./schema.js";
 
 const execFileAsync = promisify(execFile);
 const PUSH_INSPECTION_TIMEOUT_MS = 4_000;
+const UNSUPPORTED_PUSH_OPTIONS = new Set([
+  "--all",
+  "--branches",
+  "-d",
+  "--del",
+  "--dele",
+  "--delet",
+  "--delete",
+  "--mirror",
+  "--stdin",
+  "--tags",
+]);
 
 export type PushLintFinding = {
   check: LintCheck;
@@ -274,7 +286,7 @@ function parseGitSegment(
       index += 1;
       continue;
     }
-    return words.slice(index + 1).includes("push")
+    return argument.startsWith("-") && words.slice(index + 1).includes("push")
       ? { status: "unsupported" }
       : undefined;
   }
@@ -332,14 +344,6 @@ function parsePushTarget(
     "--push-option",
     "-o",
   ]);
-  const unsupportedOptions = new Set([
-    "--all",
-    "--branches",
-    "--delete",
-    "--mirror",
-    "--stdin",
-    "--tags",
-  ]);
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index] ?? "";
@@ -347,7 +351,7 @@ function parsePushTarget(
       positionals.push(...args.slice(index + 1));
       break;
     }
-    if (unsupportedOptions.has(argument)) {
+    if (UNSUPPORTED_PUSH_OPTIONS.has(argument)) {
       return { status: "unsupported" };
     }
     if (argument === "--repo") {
@@ -475,14 +479,7 @@ export async function inspectOutgoingPush(
   }
   if (
     invocation.args.some((argument) =>
-      [
-        "--all",
-        "--branches",
-        "--delete",
-        "--mirror",
-        "--stdin",
-        "--tags",
-      ].includes(argument),
+      UNSUPPORTED_PUSH_OPTIONS.has(argument),
     )
   ) {
     return { status: "unverified", reason: "unsupported-command" };

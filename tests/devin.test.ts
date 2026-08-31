@@ -201,8 +201,15 @@ describe("native Devin integration", () => {
       expect(installed.settingsPath).toBe(configPath);
       expect(config.agent.model).toBe("example-model");
       expect(Object.keys(config.hooks)).toEqual(DEVIN_HOOK_EVENTS);
-      expect(JSON.stringify(config.hooks)).toContain(
-        "codecut hook --agent devin --user",
+      const command = (
+        config.hooks.PreToolUse as Array<{
+          hooks: Array<{ command: string }>;
+        }>
+      )[0]?.hooks[0]?.command;
+      expect(command).toContain("command -v codecut");
+      expect(command).toContain('CODECUT_BIN="$HOME/.local/bin/codecut"');
+      expect(command).toContain(
+        '"$CODECUT_BIN" hook --agent devin --user',
       );
 
       const health = await inspectAgentHooks(home, "devin", {
