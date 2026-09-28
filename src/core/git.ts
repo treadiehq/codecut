@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { promisify } from "node:util";
 import path from "node:path";
+import process from "node:process";
 import {
   measureAddedComments,
   type AddedCommentStats,
@@ -68,17 +69,29 @@ const FILESYSTEM_FINGERPRINT_MAX_BYTES = 16 * 1024 * 1024;
 const GIT_DEFAULT_MAX_BUFFER_BYTES = 2 * 1024 * 1024;
 const GIT_FILE_LIST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
+// `status` refreshes the index under an optional lock and `diff` under
+// diff.autoRefreshIndex. Both rewrite `.git/index` as a side effect, which
+// races the agent's own git commands. Output is identical without the refresh.
+export function gitEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_OPTIONAL_LOCKS: "0" };
+}
+
+export function withoutIndexRefresh(args: string[]): string[] {
+  return ["-c", "diff.autoRefreshIndex=false", ...args];
+}
+
 async function git(
   cwd: string,
   args: string[],
   maxBuffer = GIT_DEFAULT_MAX_BUFFER_BYTES,
 ): Promise<string | undefined> {
   try {
-    const result = await execFileAsync("git", args, {
+    const result = await execFileAsync("git", withoutIndexRefresh(args), {
       cwd,
       encoding: "utf8",
       timeout: 3_000,
       maxBuffer,
+      env: gitEnvironment(),
     });
     return result.stdout;
   } catch {
