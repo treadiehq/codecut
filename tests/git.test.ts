@@ -1,5 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -82,6 +89,42 @@ describe("working-tree fingerprints", () => {
 
     expect(staged).toBe(untracked);
     expect(committed).toBe(untracked);
+  });
+
+  it("does not rewrite the index while inspecting the working tree", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-optional-locks-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    const filePath = path.join(directory, "example.ts");
+    await writeFile(filePath, "export const value = 1;\n");
+    await execFileAsync("git", ["add", "example.ts"], { cwd: directory });
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+      { cwd: directory },
+    );
+    // A changed mtime makes the cached stat data stale, so the next status or
+    // diff would refresh and rewrite the index unless the refresh is disabled.
+    const touched = new Date(Date.now() + 5_000);
+    await utimes(filePath, touched, touched);
+    const indexPath = path.join(directory, ".git", "index");
+    const before = await readFile(indexPath);
+
+    await workingTreeFingerprint(directory);
+    await inspectAddedComments(directory);
+
+    expect(await readFile(indexPath)).toEqual(before);
   });
 
   it("counts staged and unstaged content before the initial commit", async () => {

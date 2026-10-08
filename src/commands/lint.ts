@@ -19,6 +19,7 @@ import {
   type AddedCommentStats,
 } from "../core/comment-density.js";
 import { diffTotals, parseUnifiedDiff, type FileDiff } from "../core/diff.js";
+import { gitEnvironment, withoutIndexRefresh } from "../core/git.js";
 import {
   DEFAULT_CODE_FILE_PATTERNS,
   DEFAULT_COMMENT_CONTEXT_PATTERNS,
@@ -382,11 +383,12 @@ async function runGit(
   timeout = 30_000,
 ): Promise<string> {
   try {
-    const result = await execFileAsync("git", args, {
+    const result = await execFileAsync("git", withoutIndexRefresh(args), {
       cwd,
       encoding: "utf8",
       timeout,
       maxBuffer: 50 * 1024 * 1024,
+      env: gitEnvironment(),
     });
     return result.stdout;
   } catch (error) {
