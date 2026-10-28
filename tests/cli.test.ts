@@ -7,6 +7,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { compilePolicy } from "../src/core/compiler.js";
@@ -881,6 +882,80 @@ describe("pre-push lint gate", () => {
     const allowed = runHook();
     expect(allowed.status, allowed.stderr).toBe(0);
     expect(JSON.parse(allowed.stdout)).toEqual({ permission: "allow" });
+  });
+
+  it("delivers a Devin pre-push warning once, after the push", async () => {
+    const repositoryRoot = process.cwd();
+    // Outside this repository, so the push cannot be inspected.
+    const projectRoot = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-devin-push-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    await writePolicy(
+      projectRoot,
+      compilePolicy({
+        directives: [
+          {
+            text: "Require clean Codecut lint for git push",
+            source: {
+              path: "AGENTS.md",
+              line: 1,
+              scope: "project",
+              conditional: false,
+            },
+          },
+        ],
+        sources: ["AGENTS.md"],
+        agent: "devin",
+        acceptBlockingRules: true,
+      }),
+    );
+
+    const runHook = (input: Record<string, unknown>) => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "devin",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify({
+            session_id: "devin-push",
+            cwd: projectRoot,
+            tool_name: "exec",
+            tool_input: { command: "git push" },
+            ...input,
+          }),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, unknown>;
+    };
+    const postToolUse = {
+      hook_event_name: "PostToolUse",
+      tool_response: { success: false, output: "", error: "not a repo" },
+    };
+
+    expect(runHook({ hook_event_name: "PreToolUse" })).toEqual({});
+    expect(runHook(postToolUse)).toEqual({
+      hookSpecificOutput: {
+        hookEventName: "PostToolUse",
+        additionalContext: expect.stringContaining(
+          "not a Git repository",
+        ),
+      },
+    });
+    expect(runHook(postToolUse)).toEqual({});
   });
 });
 

@@ -423,12 +423,29 @@ function estimatedChangedLines(
 ): number | undefined {
   const command = extractCommand(event.toolInput);
   if (command?.includes("*** Begin Patch")) {
-    return command
-      .split(/\r?\n/)
-      .filter(
-        (line) =>
-          (/^[+-]/.test(line) && !/^(?:\+\+\+|---|\*\*\*)/.test(line)),
-      ).length;
+    // Patches mark files with `*** … File:` headers, so every `+`/`-` line
+    // inside a file's section is content, even one that reads `+++` or `---`.
+    let sectionPath: string | undefined;
+    let count = 0;
+    for (const line of command.split(/\r?\n/)) {
+      const header = line.match(/^\*\*\* (Add|Update|Delete) File: (.+)$/);
+      if (header?.[1] && header[2]) {
+        sectionPath = header[1] === "Delete" ? undefined : header[2].trim();
+        continue;
+      }
+      if (line === "*** End Patch") {
+        sectionPath = undefined;
+        continue;
+      }
+      if (
+        sectionPath !== undefined &&
+        (editedPath === undefined || sectionPath === editedPath) &&
+        /^[+-]/.test(line)
+      ) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
   const nestedEdits = nestedEditEntries(event);
@@ -558,20 +575,25 @@ export function deriveReceipts(
     ];
   }
 
-  const verificationPatterns = policy.rules
+  // Receipts persist and later decisions trust their flags, so only rules
+  // that can enforce anything may shape them.
+  const activeRules = policy.rules.filter(
+    (rule) => rule.enabled && rule.mode !== "off",
+  );
+  const verificationPatterns = activeRules
     .filter(
       (rule) =>
         rule.type === "verification-evidence" ||
         rule.type === "warnings-as-errors",
     )
     .flatMap((rule) => rule.commandPatterns);
-  const warningPatterns = policy.rules
+  const warningPatterns = activeRules
     .filter((rule) => rule.type === "warnings-as-errors")
     .flatMap((rule) => rule.warningPatterns);
-  const remoteCommandPatterns = policy.rules
+  const remoteCommandPatterns = activeRules
     .filter((rule) => rule.type === "local-testing")
     .flatMap((rule) => rule.remoteCommandPatterns);
-  const remoteToolPatterns = policy.rules
+  const remoteToolPatterns = activeRules
     .filter((rule) => rule.type === "local-testing")
     .flatMap((rule) => rule.remoteToolPatterns);
 
@@ -581,10 +603,7 @@ export function deriveReceipts(
     matchesAny(rawCommand, remoteCommandPatterns) ||
     matchesAny(event.toolName ?? "", remoteToolPatterns);
   const isVerification = matchesAny(rawCommand, verificationPatterns);
-  const testRuleIds = policy.rules.flatMap((rule) => {
-    if (!rule.enabled || rule.mode === "off") {
-      return [];
-    }
+  const testRuleIds = activeRules.flatMap((rule) => {
     if (rule.type === "require-passing-tests") {
       const matchesCommand = matchesAny(rawCommand, rule.commandPatterns);
       const matchesTestOutput =
@@ -727,5 +746,10 @@ export function decisionReceipt(
     outcome: decision.outcome,
     ...(warningDelivered === undefined ? {} : { warningDelivered }),
     ruleIds: decision.violations.map((violation) => violation.ruleId),
+    // Pre-tool rules are not re-evaluated later, so an undelivered warning
+    // keeps its text for the next post-tool or stop event to deliver.
+    ...(warningDelivered === false && event.stage === "pre-tool"
+      ? { violations: decision.violations }
+      : {}),
   };
 }

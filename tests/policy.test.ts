@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { compilePolicy } from "../src/core/compiler.js";
 import { evaluatePolicy } from "../src/core/engine.js";
+import { matchesAny } from "../src/core/patterns.js";
 import {
   deriveAcknowledgementReceipts,
   deriveReceipts,
@@ -479,6 +480,37 @@ describe("starter policy compilation", () => {
     expect(compiled.rules[0]?.type).toBe("advisory");
   });
 
+  it.each([
+    ["Comments may not be longer than one line", "comment-quality"],
+    ["Comments can not be longer than one line", "comment-quality"],
+    ["Comments can't be longer than one line", "comment-quality"],
+    ["Comments can’t be longer than one line", "comment-quality"],
+    ["Comments may never mention prompts", "comment-quality"],
+    ["Comments may only use one line", "comment-quality"],
+    ["Keep comments to one line so reviewers can skim them", "comment-quality"],
+    ["Comments cannot be longer than one line", "comment-quality"],
+    ["Comments may reference prompts in generated fixtures", "advisory"],
+    ["Comments in tests may reference prompts", "advisory"],
+    ["Comments can be omitted in tests", "advisory"],
+    ["Comments do not need to be long", "advisory"],
+    ["Comments don’t need to be long", "advisory"],
+    ["Allow comments in test fixtures", "advisory"],
+  ])("classifies %j as %s", (text, type) => {
+    const [rule] = compilePolicy({
+      directives: [
+        { text, source: { path: "AGENTS.md", line: 1, scope: "project" } },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "claude",
+      acceptBlockingRules: true,
+    }).rules;
+
+    expect(rule?.type).toBe(type);
+    if (/longer than one line/.test(text)) {
+      expect(rule).toMatchObject({ maxCommentLines: 1 });
+    }
+  });
+
   it("keeps negated and inline-scoped blocking phrases advisory", () => {
     const compiled = compilePolicy({
       directives: [
@@ -688,6 +720,78 @@ describe("starter policy enforcement", () => {
     expect(JSON.stringify(receipts)).not.toContain("secret");
   });
 
+  it("ignores disabled and off rules when tagging receipts", () => {
+    const source = {
+      path: "CLAUDE.md",
+      scope: "project" as const,
+      conditional: false,
+    };
+    const inactivePolicy: Policy = {
+      ...policy(),
+      rules: [
+        ...policy().rules,
+        {
+          id: "warnings-as-errors-disabled",
+          type: "warnings-as-errors",
+          directive: "Treat info lines as warnings",
+          source,
+          mode: "block",
+          confirmed: true,
+          enabled: false,
+          commandPatterns: [String.raw`\bmake\s+lint\b`],
+          warningPatterns: [String.raw`\bINFO\b`],
+        },
+        {
+          id: "local-testing-off",
+          type: "local-testing",
+          directive: "Treat every command as remote",
+          source,
+          mode: "off",
+          confirmed: true,
+          enabled: true,
+          testCommandPatterns: ["vitest"],
+          remoteCommandPatterns: [".*"],
+          remoteToolPatterns: [".*"],
+        },
+      ],
+    };
+    const stateFingerprint = "sha256:0123456789abcdef";
+    const run = (command: string) =>
+      deriveReceipts(
+        inactivePolicy,
+        hookEvent("post-tool", {
+          toolName: "Bash",
+          toolInput: { command },
+          toolOutput: "INFO: cache restored\nTest Files 3 passed (3)",
+        }),
+      ).map((receipt) => ({
+        ...receipt,
+        stateFingerprint,
+        stateBeforeFingerprint: stateFingerprint,
+      }));
+
+    expect(run("make lint")[0]).toMatchObject({
+      isVerification: false,
+      warningCount: 0,
+      location: "local",
+    });
+
+    const decision = evaluatePolicy({
+      policy: inactivePolicy,
+      event: hookEvent("stop"),
+      receipts: [edit(), ...run("npx vitest run")],
+      diffStats: {
+        files: 1,
+        added: 4,
+        deleted: 0,
+        complete: true,
+        fingerprint: stateFingerprint,
+      },
+    });
+
+    expect(decision.violations.map((item) => item.directive)).toEqual([]);
+  });
+
   it("blocks a remote test before execution", () => {
     const decision = evaluatePolicy({
       policy: policy(),
@@ -704,6 +808,45 @@ describe("starter policy enforcement", () => {
         expect.objectContaining({ directive: "Use local machines for testing" }),
       ]),
     );
+  });
+
+  it("blocks quoted and grouped remote tests", () => {
+    for (const command of [
+      "ssh runner 'pytest'",
+      "ssh runner 'vitest run'",
+      'ssh runner "rspec"',
+      "ssh runner 'bundle exec rspec'",
+      "(ssh runner 'python -m pytest')",
+    ]) {
+      const decision = evaluatePolicy({
+        policy: policy(),
+        event: hookEvent("pre-tool", {
+          toolName: "Bash",
+          toolInput: { command },
+        }),
+        receipts: [],
+      });
+
+      expect(decision.outcome, command).toBe("block");
+    }
+  });
+
+  it("classifies quoted and grouped local commands as tests", () => {
+    const testPatterns = policy().rules.flatMap((rule) =>
+      rule.type === "local-testing" ? rule.testCommandPatterns : [],
+    );
+    for (const command of [
+      "bash -c 'pytest'",
+      'sh -c "vitest run"',
+      "(cd app && npx vitest)",
+      "$(pytest)",
+      "pnpm run test:unit",
+    ]) {
+      expect(matchesAny(command, testPatterns), command).toBe(true);
+    }
+    for (const command of ["cat pytest.ini", "pytest-watch", "vitestx"]) {
+      expect(matchesAny(command, testPatterns), command).toBe(false);
+    }
   });
 
   it("blocks commandless remote test tools", () => {
@@ -1559,6 +1702,51 @@ describe("starter policy enforcement", () => {
     expect(extractAddedComments(sharedPathEvent)).toEqual([
       "Per the instructions, keep this workaround.",
     ]);
+  });
+
+  it("counts apply_patch changed lines per file section", () => {
+    const patch = (lines: string[]) =>
+      deriveReceipts(
+        policy(),
+        hookEvent("post-tool", {
+          toolName: "apply_patch",
+          toolInput: {
+            command: ["*** Begin Patch", ...lines, "*** End Patch"].join("\n"),
+          },
+          toolOutput: "patched",
+        }),
+      )
+        .filter((receipt) => receipt.kind === "edit")
+        .map((receipt) => [receipt.path, receipt.changedLines]);
+
+    expect(
+      patch([
+        "*** Add File: src/a.ts",
+        "+export const a = 1;",
+        "*** Update File: src/b.ts",
+        "@@",
+        "-export const b = 1;",
+        "+export const b = 2;",
+        "*** Delete File: src/old.ts",
+        "*** Update File: src/a.ts",
+        "@@",
+        "+export const extra = true;",
+      ]),
+    ).toEqual([
+      ["src/a.ts", 2],
+      ["src/b.ts", 2],
+      ["src/old.ts", 0],
+    ]);
+    expect(
+      patch([
+        "*** Update File: README.md",
+        "@@",
+        "-old",
+        "+---",
+        "++++ heading",
+        "---flag",
+      ]),
+    ).toEqual([["README.md", 4]]);
   });
 
   it("keeps MultiEdit comments associated with their edited files", () => {

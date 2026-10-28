@@ -158,7 +158,17 @@ function shellSegments(command: string): string[][] | undefined {
       continue;
     }
     if (character === "\\" && quote !== "'") {
-      escaped = true;
+      // A backslash before a line break continues the line: shell drops both.
+      const lineBreak = command.startsWith("\r\n", index + 1)
+        ? 2
+        : command[index + 1] === "\n"
+          ? 1
+          : 0;
+      if (lineBreak > 0) {
+        index += lineBreak;
+      } else {
+        escaped = true;
+      }
       continue;
     }
     if (quote) {

@@ -12,7 +12,11 @@ import {
   formatDevinOutput,
   normalizeDevinEvent,
 } from "../src/adapters/devin.js";
-import type { PolicyDecision } from "../src/core/schema.js";
+import { compilePolicy } from "../src/core/compiler.js";
+import { evaluatePolicy } from "../src/core/engine.js";
+import { decisionReceipt } from "../src/core/events.js";
+import type { PushLintEvidence } from "../src/core/push.js";
+import type { PolicyDecision, Receipt } from "../src/core/schema.js";
 import {
   devinUserConfigPath,
   DEVIN_HOOK_COMMAND,
@@ -178,6 +182,45 @@ describe("native Devin integration", () => {
     expect(await hasProjectHooks(projectRoot, "devin", "stop")).toBe(true);
   });
 
+  it("reads project hooks from the top level beside a stray hooks object", async () => {
+    const projectRoot = await temporaryDirectory();
+    const settingsPath = path.join(projectRoot, ".devin", "hooks.v1.json");
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          PreToolUse: [
+            { hooks: [{ type: "command", command: "echo unrelated" }] },
+          ],
+        },
+      }),
+    );
+
+    await installDevinHooks(projectRoot);
+    expect(
+      (await inspectAgentHooks(projectRoot, "devin")).missingHookEvents,
+    ).toEqual([]);
+    expect(await hasProjectHooks(projectRoot, "devin", "stop")).toBe(true);
+
+    const installed = JSON.parse(await readFile(settingsPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        hooks: Object.fromEntries(
+          DEVIN_HOOK_EVENTS.map((event) => [event, installed[event]]),
+        ),
+      }),
+    );
+    expect(
+      (await inspectAgentHooks(projectRoot, "devin")).missingHookEvents,
+    ).toEqual(DEVIN_HOOK_EVENTS);
+    expect(await hasProjectHooks(projectRoot, "devin", "stop")).toBe(false);
+  });
+
   it("preserves user configuration and installs nested global hooks", async () => {
     const home = await temporaryDirectory();
     const configHome = path.join(home, "config");
@@ -266,4 +309,147 @@ describe("native Devin integration", () => {
       hooks: [],
     });
   });
+});
+
+describe("Devin pre-push warnings", () => {
+  const findings: PushLintEvidence = {
+    status: "findings",
+    branch: "main",
+    base: "origin/main",
+    range: "origin/main..HEAD",
+    files: 1,
+    findings: [
+      {
+        check: "comment-quality",
+        path: "src/example.ts",
+        line: 1,
+        message: "todo",
+      },
+    ],
+  };
+  const cases: Array<{
+    accept: boolean;
+    evidence: PushLintEvidence;
+    text: string;
+  }> = [
+    { accept: false, evidence: findings, text: "src/example.ts:1: todo" },
+    {
+      accept: false,
+      evidence: { status: "unverified", reason: "no-base" },
+      text: "could not find a local remote-tracking branch",
+    },
+    {
+      accept: true,
+      evidence: { status: "unverified", reason: "no-base" },
+      text: "could not find a local remote-tracking branch",
+    },
+    {
+      accept: true,
+      evidence: { status: "unverified", reason: "git-error" },
+      text: "could not run the Git diff",
+    },
+  ];
+  const policy = (accept: boolean) =>
+    compilePolicy({
+      directives: [
+        {
+          text: "Push only lint-clean branches",
+          source: {
+            path: "AGENTS.md",
+            line: 1,
+            scope: "project",
+            conditional: false,
+          },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "devin",
+      acceptBlockingRules: accept,
+    });
+  const event = (input: Record<string, unknown>) =>
+    normalizeDevinEvent({
+      session_id: "session-1",
+      cwd: "/tmp/project",
+      ...input,
+    });
+  const push = {
+    tool_name: "exec",
+    tool_input: { command: "git push" },
+  };
+
+  for (const { accept, evidence, text } of cases) {
+    const label = `accept=${accept} ${evidence.status}${
+      evidence.status === "unverified" ? `/${evidence.reason}` : ""
+    }`;
+
+    it(`delivers a ${label} warning after the push`, () => {
+      const compiled = policy(accept);
+      expect(compiled.rules[0]).toMatchObject({
+        type: "require-clean-push",
+        mode: "block",
+        confirmed: accept,
+      });
+
+      const preTool = event({ hook_event_name: "PreToolUse", ...push });
+      const preDecision = evaluatePolicy({
+        policy: compiled,
+        event: preTool,
+        receipts: [],
+        pushLintEvidence: evidence,
+      });
+      expect(preDecision.outcome).toBe("warn");
+      expect(formatDevinOutput(preTool, preDecision)).toEqual({});
+      const receipts: Receipt[] = [
+        decisionReceipt(preTool, preDecision, new Date(), false),
+      ];
+
+      const postTool = event({
+        hook_event_name: "PostToolUse",
+        ...push,
+        tool_response: { success: true, output: "", error: null },
+      });
+      const postDecision = evaluatePolicy({
+        policy: compiled,
+        event: postTool,
+        receipts,
+      });
+      expect(formatDevinOutput(postTool, postDecision)).toEqual({
+        hookSpecificOutput: {
+          hookEventName: "PostToolUse",
+          additionalContext: expect.stringContaining(text),
+        },
+      });
+
+      receipts.push(decisionReceipt(postTool, postDecision, new Date(), true));
+      expect(
+        evaluatePolicy({ policy: compiled, event: postTool, receipts })
+          .outcome,
+      ).toBe("allow");
+    });
+
+    it(`delivers a ${label} warning at stop when no post-tool event arrives`, () => {
+      const compiled = policy(accept);
+      const preTool = event({ hook_event_name: "PreToolUse", ...push });
+      const preDecision = evaluatePolicy({
+        policy: compiled,
+        event: preTool,
+        receipts: [],
+        pushLintEvidence: evidence,
+      });
+      const stop = event({
+        hook_event_name: "Stop",
+        stop_hook_active: false,
+      });
+      const stopDecision = evaluatePolicy({
+        policy: compiled,
+        event: stop,
+        receipts: [decisionReceipt(preTool, preDecision, new Date(), false)],
+      });
+
+      expect(formatDevinOutput(stop, stopDecision)).toEqual({
+        decision: "block",
+        reason: expect.stringContaining(text),
+      });
+    });
+  }
 });

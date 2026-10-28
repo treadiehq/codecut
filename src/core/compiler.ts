@@ -290,8 +290,11 @@ function classifyDirective(
     };
   }
 
+  // "may"/"can" grant leave only when they govern "comments" within a few
+  // words; "may not", "can't" or "can only" restrict instead, and a modal
+  // past a clause break belongs to another subject.
   const permissiveCommentGuidance =
-    /\bcomments?\b.*\b(?:may|can|need not|do not need|don't need|not required)\b|\b(?:allow|ignore|exclude|except)\b.*\bcomments?\b/.test(
+    /\bcomments?\b(?:\s+[\w'’-]+){0,3}?\s+(?:may|can)\b(?!\s+(?:not|never|only)\b|['’]t\b)|\bcomments?\b.*\b(?:need not|do not need|don['’]t need|not required)\b|\b(?:allow|ignore|exclude|except)\b.*\bcomments?\b/.test(
       normalized,
     );
   if (

@@ -178,6 +178,36 @@ describe("comment scanning", () => {
     ]);
   });
 
+  it.each([
+    ["src/guard.ts", ';["TODO", "DONE"].forEach((s) => render(s));', []],
+    ["src/guard.js", ';(() => { const label = "FIXME: later"; })();', []],
+    ["src/guard.ts", "--TODO;", []],
+    ["src/note.ts", "// TODO: real comment", ["todo-comments"]],
+    ["db/query.sql", "-- TODO: add an index", ["todo-comments"]],
+    ["db/query.sql", "SELECT 1; -- done", []],
+    ["boot/start.asm", "; TODO: save registers", ["todo-comments"]],
+    ["src/core.clj", ";; FIXME: handle nil", ["todo-comments"]],
+  ])("treats a leading ; or -- in %s as its language does: %s", (filePath, line, checks) => {
+    const files = parseUnifiedDiff(
+      [
+        `diff --git a/${filePath} b/${filePath}`,
+        `--- a/${filePath}`,
+        `+++ b/${filePath}`,
+        "@@ -0,0 +1 @@",
+        `+${line}`,
+        "",
+      ].join("\n"),
+    );
+    const config = defaultLintConfig();
+    config.filePatterns = [...config.filePatterns, String.raw`\.(?:asm|clj)$`];
+
+    expect(
+      runLint(files, config)
+        .findings.filter((finding) => finding.check !== "blast-radius")
+        .map((finding) => finding.check),
+    ).toEqual(checks);
+  });
+
   it("counts only the text lines of a doc comment", () => {
     expect(
       scanComments([
@@ -937,6 +967,32 @@ describe("lint configuration", () => {
       parseLintChecks("comment-quality"),
     );
     expect(explicit.checks.has("comment-quality")).toBe(true);
+  });
+
+  it("uses the first active blast-radius rule", async () => {
+    const blastRule = (id: string, maxFiles: number, enabled: boolean) => ({
+      id,
+      type: "blast-radius" as const,
+      directive: "Keep changes small",
+      source: { path: "CLAUDE.md", scope: "project" as const, conditional: false },
+      mode: "warn" as const,
+      confirmed: true,
+      enabled,
+      maxFiles,
+      maxChangedLines: 10,
+    });
+    const policy = {
+      version: 1 as const,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      agents: ["claude" as const],
+      sources: ["CLAUDE.md"],
+      rules: [blastRule("blast-off", 1, false), blastRule("blast-on", 3, true)],
+    };
+
+    const config = await resolveLintConfig(tmpdir(), undefined, policy);
+    expect(config.checks.has("blast-radius")).toBe(true);
+    expect(config.maxFiles).toBe(3);
   });
 
   it("honors policy comment-density thresholds", async () => {

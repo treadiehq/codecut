@@ -1,11 +1,18 @@
+// A command word starts or ends at whitespace, a shell separator, a subshell
+// parenthesis, or a quote, so `ssh host 'vitest run'` and `(cd app && pytest)`
+// still match.
+const COMMAND_START = String.raw`(?:^|[\s;&|()'"\`])`;
+const COMMAND_END = String.raw`(?:[\s;&|)'"\`]|$)`;
+const SCRIPT_END = String.raw`(?:[\s;&|)'"\`:_-]|$)`;
+
 export const DEFAULT_TEST_COMMAND_PATTERNS = [
-  String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?:[\s:_-]|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)(?:npx\s+)?vitest(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)(?:python(?:3)?\s+-m\s+)?pytest(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)cargo\s+test(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)go\s+test(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)(?:bundle\s+exec\s+)?rspec(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)(?:dotnet\s+test|mvn\s+test|gradle\s+test)(?:\s|$)`,
+  String.raw`${COMMAND_START}(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test${SCRIPT_END}`,
+  String.raw`${COMMAND_START}(?:npx\s+)?vitest${COMMAND_END}`,
+  String.raw`${COMMAND_START}(?:python(?:3)?\s+-m\s+)?pytest${COMMAND_END}`,
+  String.raw`${COMMAND_START}cargo\s+test${COMMAND_END}`,
+  String.raw`${COMMAND_START}go\s+test${COMMAND_END}`,
+  String.raw`${COMMAND_START}(?:bundle\s+exec\s+)?rspec${COMMAND_END}`,
+  String.raw`${COMMAND_START}(?:dotnet\s+test|mvn\s+test|gradle\s+test)${COMMAND_END}`,
 ];
 
 export const DEFAULT_TEST_OUTPUT_PATTERNS = [
@@ -18,11 +25,11 @@ export const DEFAULT_TEST_OUTPUT_PATTERNS = [
 
 export const DEFAULT_VERIFICATION_COMMAND_PATTERNS = [
   ...DEFAULT_TEST_COMMAND_PATTERNS,
-  String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|check|build)(?:\s|$|:)`,
-  String.raw`(?:^|[;&|]\s*|\s)(?:npx\s+)?(?:eslint|tsc)(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)(?:ruff|mypy|pyright)(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)cargo\s+(?:check|clippy|build)(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)go\s+(?:vet|build)(?:\s|$)`,
+  String.raw`${COMMAND_START}(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|check|build)(?:[\s;&|)'"\`:]|$)`,
+  String.raw`${COMMAND_START}(?:npx\s+)?(?:eslint|tsc)${COMMAND_END}`,
+  String.raw`${COMMAND_START}(?:ruff|mypy|pyright)${COMMAND_END}`,
+  String.raw`${COMMAND_START}cargo\s+(?:check|clippy|build)${COMMAND_END}`,
+  String.raw`${COMMAND_START}go\s+(?:vet|build)${COMMAND_END}`,
 ];
 
 export const DEFAULT_WARNING_PATTERNS = [
@@ -32,10 +39,10 @@ export const DEFAULT_WARNING_PATTERNS = [
 ];
 
 export const DEFAULT_REMOTE_COMMAND_PATTERNS = [
-  String.raw`(?:^|[;&|]\s*|\s)ssh(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)gh\s+(?:workflow\s+run|run\s+rerun)(?:\s|$)`,
-  String.raw`(?:^|[;&|]\s*|\s)(?:circleci|buildkite-agent|actuate)\b`,
-  String.raw`(?:^|[;&|]\s*|\s)kubectl\s+exec(?:\s|$)`,
+  String.raw`${COMMAND_START}ssh${COMMAND_END}`,
+  String.raw`${COMMAND_START}gh\s+(?:workflow\s+run|run\s+rerun)${COMMAND_END}`,
+  String.raw`${COMMAND_START}(?:circleci|buildkite-agent|actuate)\b`,
+  String.raw`${COMMAND_START}kubectl\s+exec${COMMAND_END}`,
 ];
 
 export const DEFAULT_REMOTE_TOOL_PATTERNS = [
@@ -56,6 +63,56 @@ export const LEGACY_COMMENT_CONTEXT_PATTERNS = [
   String.raw`\b[A-Z][A-Z0-9]{1,9}-\d+\b`,
   String.raw`(?:\.cursor/(?:plans|rules)|/tmp/|temporary\s+spec|ephemeral\s+spec)`,
   String.raw`\b(?:as\s+requested|per\s+(?:the\s+)?(?:prompt|instructions?)|the\s+agent|I\s+(?:added|changed|implemented))\b`,
+];
+
+// Fingerprints of earlier command-pattern defaults, whose boundaries missed
+// quoted and parenthesized commands. parsePolicyDocument swaps a list that
+// still equals one of these for the current default. Do not edit.
+const LEGACY_TEST_COMMAND_TAIL = [
+  String.raw`(?:^|[;&|]\s*|\s)(?:npx\s+)?vitest(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)(?:python(?:3)?\s+-m\s+)?pytest(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)cargo\s+test(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)go\s+test(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)(?:bundle\s+exec\s+)?rspec(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)(?:dotnet\s+test|mvn\s+test|gradle\s+test)(?:\s|$)`,
+];
+const LEGACY_TEST_COMMAND_SETS = [
+  [
+    String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?:\s|$|:)`,
+    ...LEGACY_TEST_COMMAND_TAIL,
+  ],
+  [
+    String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?:[\s:_-]|$)`,
+    ...LEGACY_TEST_COMMAND_TAIL,
+  ],
+];
+const LEGACY_VERIFICATION_COMMAND_TAIL = [
+  String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:lint|typecheck|check|build)(?:\s|$|:)`,
+  String.raw`(?:^|[;&|]\s*|\s)(?:npx\s+)?(?:eslint|tsc)(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)(?:ruff|mypy|pyright)(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)cargo\s+(?:check|clippy|build)(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)go\s+(?:vet|build)(?:\s|$)`,
+];
+const LEGACY_REMOTE_COMMAND_PATTERNS = [
+  String.raw`(?:^|[;&|]\s*|\s)ssh(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)gh\s+(?:workflow\s+run|run\s+rerun)(?:\s|$)`,
+  String.raw`(?:^|[;&|]\s*|\s)(?:circleci|buildkite-agent|actuate)\b`,
+  String.raw`(?:^|[;&|]\s*|\s)kubectl\s+exec(?:\s|$)`,
+];
+export const LEGACY_COMMAND_PATTERN_UPGRADES: ReadonlyArray<
+  readonly [legacy: readonly string[], current: readonly string[]]
+> = [
+  ...LEGACY_TEST_COMMAND_SETS.map(
+    (legacy) => [legacy, DEFAULT_TEST_COMMAND_PATTERNS] as const,
+  ),
+  ...LEGACY_TEST_COMMAND_SETS.map(
+    (legacy) =>
+      [
+        [...legacy, ...LEGACY_VERIFICATION_COMMAND_TAIL],
+        DEFAULT_VERIFICATION_COMMAND_PATTERNS,
+      ] as const,
+  ),
+  [LEGACY_REMOTE_COMMAND_PATTERNS, DEFAULT_REMOTE_COMMAND_PATTERNS],
 ];
 
 export const DEFAULT_COMMENT_CONTEXT_PATTERNS = [

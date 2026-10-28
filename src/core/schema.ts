@@ -168,6 +168,15 @@ export const normalizedHookEventSchema = z.object({
 });
 export type NormalizedHookEvent = z.infer<typeof normalizedHookEventSchema>;
 
+const ruleViolationSchema = z.object({
+  ruleId: z.string().min(1),
+  directive: z.string().min(1),
+  source: directiveSourceSchema,
+  severity: z.enum(["warn", "block"]),
+  evidence: z.string(),
+  recovery: z.string(),
+});
+
 export const receiptSchema = z.object({
   version: z.literal(1),
   id: z.string().min(1),
@@ -203,6 +212,7 @@ export const receiptSchema = z.object({
   outcome: z.enum(["allow", "warn", "block"]).optional(),
   warningDelivered: z.boolean().optional(),
   ruleIds: z.array(z.string()).optional(),
+  violations: z.array(ruleViolationSchema).optional(),
   diffFiles: z.number().int().nonnegative().optional(),
   diffChangedLines: z.number().int().nonnegative().optional(),
 });

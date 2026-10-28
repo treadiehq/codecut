@@ -25,20 +25,43 @@ function stringValue(input: JsonRecord, ...keys: string[]): string | undefined {
   return undefined;
 }
 
-function openCodeToolOutputFailed(toolOutput: unknown): boolean {
+function openCodeMetadata(toolOutput: unknown): JsonRecord | undefined {
   if (toolOutput && typeof toolOutput === "object" && !Array.isArray(toolOutput)) {
     const metadata = (toolOutput as JsonRecord).metadata;
     if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
-      const exit = (metadata as JsonRecord).exit;
-      if (typeof exit === "number" && Number.isInteger(exit)) {
-        return exit !== 0;
-      }
-      if ((metadata as JsonRecord).timeout === true) {
-        return true;
-      }
+      return metadata as JsonRecord;
     }
   }
+  return undefined;
+}
+
+function openCodeExitCode(toolOutput: unknown): number | undefined {
+  const exit = openCodeMetadata(toolOutput)?.exit;
+  return typeof exit === "number" && Number.isInteger(exit) ? exit : undefined;
+}
+
+function openCodeToolOutputFailed(toolOutput: unknown): boolean {
+  const exit = openCodeExitCode(toolOutput);
+  if (exit !== undefined) {
+    return exit !== 0;
+  }
+  if (openCodeMetadata(toolOutput)?.timeout === true) {
+    return true;
+  }
   return toolOutputFailed(toolOutput);
+}
+
+/**
+ * Receipts judge success with the generic toolOutputFailed, which reads a
+ * top-level `exitCode` but not OpenCode's `metadata.exit`. Copying it up keeps
+ * a receipt's success in line with the stage chosen above, instead of letting
+ * an exit-code phrase in the command's own output decide.
+ */
+function withExitCode(toolOutput: unknown): unknown {
+  const exit = openCodeExitCode(toolOutput);
+  return exit === undefined
+    ? toolOutput
+    : { ...(toolOutput as JsonRecord), exitCode: exit };
 }
 
 function stageForEvent(
@@ -103,7 +126,7 @@ export function normalizeOpenCodeEvent(
       "toolCallId",
     ),
     toolInput: input.tool_input ?? input.toolInput ?? input.args,
-    toolOutput,
+    toolOutput: withExitCode(toolOutput),
     error: stringValue(input, "error", "error_message"),
     stopHookActive:
       input.stop_hook_active === true || input.stopHookActive === true,
