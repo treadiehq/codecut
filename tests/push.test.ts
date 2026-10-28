@@ -29,6 +29,11 @@ describe("git push command detection", () => {
     "/usr/bin/git -C ./nested push -u origin HEAD",
     "git --git-dir=/repo/.git push",
     "cd nested && git push",
+    "git pull --rebase && \\\n  git push origin HEAD",
+    "git \\\n  push",
+    "git push \\\r\n  origin HEAD",
+    // An escaped backslash leaves the newline as a command separator.
+    "echo done \\\\\ngit push",
   ])("recognizes a push command: %s", (command) => {
     expect(isGitPushCommand(command)).toBe(true);
   });
@@ -41,6 +46,7 @@ describe("git push command detection", () => {
     "git commit -m push",
     "git stash push",
     "git stash push -m wip",
+    "git commit -m 'line \\\ngit push'",
   ])("does not mistake text for a push command: %s", (command) => {
     expect(isGitPushCommand(command)).toBe(false);
   });
@@ -71,6 +77,35 @@ describe("outgoing push inspection", () => {
       base: "refs/remotes/origin/feature/example",
       range: `${base}..${head}`,
     });
+  });
+
+  it("parses a push continued across lines like the one-line command", async () => {
+    const inspect = runner({
+      "rev-parse --show-toplevel": "/repo\n",
+      "rev-parse --verify HEAD": `${head}\n`,
+      "branch --show-current": "feature/example\n",
+      "config --get branch.feature/example.remote": "origin\n",
+      "rev-parse --abbrev-ref --symbolic-full-name @{upstream}":
+        "origin/feature/example\n",
+      "rev-parse --verify --quiet refs/remotes/origin/feature/example^{commit}":
+        `${base}\n`,
+    });
+    const oneLine = await inspectOutgoingPush(
+      "git push origin HEAD",
+      "/repo",
+      inspect,
+    );
+
+    expect(oneLine).toMatchObject({ status: "ready", remote: "origin" });
+    for (const command of [
+      "git push \\\n  origin HEAD",
+      "git push \\\r\n  origin HEAD",
+      "git pull --rebase && \\\n  git push origin HEAD",
+    ]) {
+      await expect(
+        inspectOutgoingPush(command, "/repo", inspect),
+      ).resolves.toEqual(oneLine);
+    }
   });
 
   it.each(["--force", "--force-with-lease", "--verbose", "--quiet"])(

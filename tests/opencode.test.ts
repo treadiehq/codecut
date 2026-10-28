@@ -14,7 +14,9 @@ import {
   formatOpenCodeOutput,
   normalizeOpenCodeEvent,
 } from "../src/adapters/opencode.js";
-import { extractEditedPaths } from "../src/core/events.js";
+import { compilePolicy } from "../src/core/compiler.js";
+import { evaluatePolicy } from "../src/core/engine.js";
+import { deriveReceipts, extractEditedPaths } from "../src/core/events.js";
 import type { PolicyDecision } from "../src/core/schema.js";
 import {
   inspectOpenCodePlugin,
@@ -113,6 +115,103 @@ describe("native OpenCode integration", () => {
     });
 
     expect(event.stage).toBe("post-tool-failure");
+  });
+
+  it("trusts metadata.exit over exit-code phrases in a test's output", () => {
+    const policy = compilePolicy({
+      directives: [
+        {
+          text: "All unit tests must pass",
+          source: { path: "AGENTS.md", line: 1, scope: "project" },
+        },
+      ],
+      sources: ["AGENTS.md"],
+      agent: "opencode",
+      acceptBlockingRules: true,
+    });
+    const stateFingerprint = "sha256:0123456789abcdef";
+    const idleAfterTest = (exit: number) => {
+      const edit = normalizeOpenCodeEvent(
+        {
+          event: "tool.execute.after",
+          session_id: "session-1",
+          cwd: "/tmp/project",
+          tool_name: "write",
+          call_id: "call-1",
+          tool_input: {
+            filePath: "src/example.ts",
+            content: "export const value = 1;",
+          },
+          tool_output: { output: "Done", metadata: {} },
+        },
+        new Date("2026-08-26T10:00:00.000Z"),
+      );
+      const test = normalizeOpenCodeEvent(
+        {
+          event: "tool.execute.after",
+          session_id: "session-1",
+          cwd: "/tmp/project",
+          tool_name: "bash",
+          call_id: "call-2",
+          tool_input: { command: "npm test" },
+          tool_output: {
+            title: "npm test",
+            output:
+              "✓ reports when the child process exited with code 1\n30 tests passed",
+            metadata: { exit, truncated: false },
+          },
+        },
+        new Date("2026-08-26T11:00:00.000Z"),
+      );
+      const receipts = [edit, test]
+        .flatMap((event) => deriveReceipts(policy, event))
+        .map((receipt) =>
+          receipt.kind === "command"
+            ? {
+                ...receipt,
+                stateFingerprint,
+                stateBeforeFingerprint: stateFingerprint,
+              }
+            : receipt,
+        );
+      const idle = normalizeOpenCodeEvent({
+        event: "session.idle",
+        session_id: "session-1",
+        cwd: "/tmp/project",
+      });
+      const decision = evaluatePolicy({
+        policy,
+        event: idle,
+        receipts,
+        diffStats: {
+          files: 1,
+          added: 1,
+          deleted: 0,
+          complete: true,
+          fingerprint: stateFingerprint,
+        },
+      });
+      return {
+        stage: test.stage,
+        success: receipts.find((receipt) => receipt.kind === "command")
+          ?.success,
+        output: formatOpenCodeOutput(idle, decision),
+      };
+    };
+
+    expect(idleAfterTest(0)).toEqual({
+      stage: "post-tool",
+      success: true,
+      output: { outcome: "allow" },
+    });
+    expect(idleAfterTest(1)).toMatchObject({
+      stage: "post-tool-failure",
+      success: false,
+      output: {
+        outcome: "continue",
+        reason: expect.stringContaining("The latest test failed"),
+      },
+    });
   });
 
   it("recognizes OpenCode camel-case edit paths", () => {

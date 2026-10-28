@@ -168,6 +168,46 @@ describe("directive discovery", () => {
     ).toBe(true);
   });
 
+  it.each([
+    ["a tilde fence", ["~~~sh", "- All unit tests must pass", "~~~"]],
+    [
+      "a longer fence quoting a shorter opener",
+      ["````md", "```sh", "- All unit tests must pass", "````"],
+    ],
+    [
+      "a tilde line inside a backtick fence",
+      ["```sh", "~~~", "- All unit tests must pass", "```"],
+    ],
+    [
+      "a fence closed only by a matching closer",
+      ["~~~~md", "~~~", "```", "- All unit tests must pass", "~~~~"],
+    ],
+    [
+      "a fence nested in a list item",
+      ["1. Example:", "    ```sh", "    - All unit tests must pass", "    ```"],
+    ],
+  ])("skips the contents of %s", (_label, fenced) => {
+    const directives = parseDirectives(
+      [...fenced, "", "- Never commit secrets"].join("\n"),
+      { path: "CLAUDE.md", scope: "project", conditional: false },
+    );
+
+    expect(directives.map((item) => item.text)).toEqual([
+      "Never commit secrets",
+    ]);
+  });
+
+  it("does not open a fence on inline code with backticks", () => {
+    const directives = parseDirectives(
+      ["```Always``` use `pnpm`", "- Never commit secrets"].join("\n"),
+      { path: "CLAUDE.md", scope: "project", conditional: false },
+    );
+
+    expect(directives.map((item) => item.text)).toContain(
+      "Never commit secrets",
+    );
+  });
+
   it("does not treat a list item before a thematic break as a heading", () => {
     const directives = parseDirectives(
       [

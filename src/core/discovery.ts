@@ -157,7 +157,7 @@ export function parseDirectives(
 ): Directive[] {
   const directives: Directive[] = [];
   const lines = content.split(/\r?\n/);
-  let inCodeFence = false;
+  let codeFence: { marker: string; length: number } | undefined;
   let inFrontmatter = lines[0]?.trim() === "---";
   const conditionalHeadings = new Map<number, boolean>();
 
@@ -172,11 +172,22 @@ export function parseDirectives(
     if (inFrontmatter) {
       return;
     }
-    if (line.trim().startsWith("```")) {
-      inCodeFence = !inCodeFence;
+    // A fence closes only on the character it opened with, repeated at least
+    // as often and followed by nothing else, so a block can quote fences.
+    // Indentation is not limited, so fences nested in list items still count.
+    const fence = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (codeFence) {
+      if (
+        fence?.[1]?.[0] === codeFence.marker &&
+        fence[1].length >= codeFence.length &&
+        fence[2]?.trim() === ""
+      ) {
+        codeFence = undefined;
+      }
       return;
     }
-    if (inCodeFence) {
+    if (fence?.[1] && !(fence[1][0] === "`" && fence[2]?.includes("`"))) {
+      codeFence = { marker: fence[1][0]!, length: fence[1].length };
       return;
     }
 

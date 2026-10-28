@@ -78,6 +78,7 @@ const STAGE_EVENTS: Record<
   codex: {
     "pre-tool": ["PreToolUse"],
     "post-tool": ["PostToolUse"],
+    "post-tool-failure": ["PostToolUse"],
     stop: ["Stop"],
     "context-reset": ["SessionStart"],
   },
@@ -294,6 +295,7 @@ function entryHasCodecutCommand(
 async function installedJsonHookEvents(
   settingsPath: string,
   agent: Exclude<SupportedAgentName, "opencode">,
+  userLevel = false,
 ): Promise<string[]> {
   try {
     const parsed = JSON.parse(await readFile(settingsPath, "utf8")) as unknown;
@@ -313,9 +315,11 @@ async function installedJsonHookEvents(
     if (!isObject(parsed)) {
       return [];
     }
+    // Devin's project file keeps events at the top level; only its user
+    // config nests them under `hooks`.
     const hooks =
       agent === "devin"
-        ? isObject(parsed.hooks)
+        ? userLevel && isObject(parsed.hooks)
           ? parsed.hooks
           : parsed
         : isObject(parsed.hooks)
@@ -353,7 +357,11 @@ export async function inspectAgentHooks(
     installedHookEvents =
       agent === "opencode"
         ? await inspectOpenCodePlugin(settingsPath)
-        : await installedJsonHookEvents(settingsPath, agent);
+        : await installedJsonHookEvents(
+            settingsPath,
+            agent,
+            options.userLevel,
+          );
   } catch {
     // Missing, unreadable, or invalid hook files are reported as incomplete.
   }

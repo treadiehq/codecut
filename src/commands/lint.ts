@@ -196,15 +196,20 @@ export async function resolveLintConfig(
     }
   }
 
-  const blastRule = policy.rules.find((rule) => rule.type === "blast-radius");
-  if (blastRule && blastRule.type === "blast-radius") {
-    if (!blastRule.enabled || blastRule.mode === "off") {
+  const blastRules = policy.rules.filter(
+    (rule) => rule.type === "blast-radius",
+  );
+  if (blastRules.length > 0) {
+    const activeBlastRule = blastRules.find(
+      (rule) => rule.enabled && rule.mode !== "off",
+    );
+    if (!activeBlastRule || activeBlastRule.type !== "blast-radius") {
       if (!requestedChecks) {
         config.checks.delete("blast-radius");
       }
     } else {
-      config.maxFiles = blastRule.maxFiles;
-      config.maxChangedLines = blastRule.maxChangedLines;
+      config.maxFiles = activeBlastRule.maxFiles;
+      config.maxChangedLines = activeBlastRule.maxChangedLines;
     }
   }
 

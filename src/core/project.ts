@@ -9,6 +9,7 @@ import {
 import path from "node:path";
 import {
   DEFAULT_COMMENT_CONTEXT_PATTERNS,
+  LEGACY_COMMAND_PATTERN_UPGRADES,
   LEGACY_COMMENT_CONTEXT_PATTERNS,
 } from "./patterns.js";
 import { policySchema, type Policy } from "./schema.js";
@@ -51,7 +52,10 @@ export async function migrateLegacyProjectDirectory(
   return true;
 }
 
-function patternsEqual(left: string[], right: string[]): boolean {
+function patternsEqual(
+  left: readonly string[],
+  right: readonly string[],
+): boolean {
   return (
     left.length === right.length &&
     left.every((pattern, index) => pattern === right[index])
@@ -74,6 +78,13 @@ export async function findProjectRoot(startDirectory: string): Promise<string | 
   }
 }
 
+function upgradeCommandPatterns(patterns: string[]): string[] {
+  const upgrade = LEGACY_COMMAND_PATTERN_UPGRADES.find(([legacy]) =>
+    patternsEqual(patterns, legacy),
+  );
+  return upgrade ? [...upgrade[1]] : patterns;
+}
+
 export function parsePolicyDocument(raw: string): Policy {
   const policy = policySchema.parse(JSON.parse(raw));
   return {
@@ -92,6 +103,21 @@ export function parsePolicyDocument(raw: string): Policy {
         return {
           ...rule,
           bannedPatterns: [...DEFAULT_COMMENT_CONTEXT_PATTERNS],
+        };
+      }
+      if (rule.type === "local-testing") {
+        return {
+          ...rule,
+          testCommandPatterns: upgradeCommandPatterns(rule.testCommandPatterns),
+          remoteCommandPatterns: upgradeCommandPatterns(
+            rule.remoteCommandPatterns,
+          ),
+        };
+      }
+      if ("commandPatterns" in rule) {
+        return {
+          ...rule,
+          commandPatterns: upgradeCommandPatterns(rule.commandPatterns),
         };
       }
       return rule;

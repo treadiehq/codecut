@@ -615,6 +615,30 @@ function evaluateStop(
   return violations;
 }
 
+/**
+ * Pre-tool warnings whose hook output could not carry them (Devin and
+ * Polytoken pre-tool responses have no advisory field), and that no later
+ * delivered decision has repeated since.
+ */
+function undeliveredWarnings(receipts: Receipt[]): RuleViolation[] {
+  const pending = new Map<string, RuleViolation>();
+  for (const receipt of receipts) {
+    if (receipt.kind !== "decision") {
+      continue;
+    }
+    if (receipt.warningDelivered === false) {
+      for (const item of receipt.violations ?? []) {
+        pending.set(item.ruleId, item);
+      }
+      continue;
+    }
+    for (const ruleId of receipt.ruleIds ?? []) {
+      pending.delete(ruleId);
+    }
+  }
+  return [...pending.values()];
+}
+
 function summarize(
   policy: Policy,
   receipts: Receipt[],
@@ -671,7 +695,7 @@ export function evaluatePolicy(options: {
   githubPrEvidence?: GithubPrEvidence;
   pushLintEvidence?: PushLintEvidence;
 }): PolicyDecision {
-  const violations =
+  const evaluated =
     options.event.stage === "pre-tool"
       ? evaluatePreTool(
           options.policy,
@@ -688,6 +712,21 @@ export function evaluatePolicy(options: {
             options.githubPrEvidence,
           )
         : evaluatePostTool(options.policy, options.event, options.receipts);
+  const violations =
+    options.event.stage === "pre-tool"
+      ? evaluated
+      : [
+          ...evaluated,
+          ...undeliveredWarnings(options.receipts).filter(
+            (pending) =>
+              options.policy.rules.some(
+                (rule) =>
+                  rule.id === pending.ruleId &&
+                  rule.enabled &&
+                  rule.mode !== "off",
+              ) && !evaluated.some((item) => item.ruleId === pending.ruleId),
+          ),
+        ];
 
   const outcome = violations.some((item) => item.severity === "block")
     ? "block"

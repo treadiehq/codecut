@@ -9,7 +9,10 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { normalizeAgentEvent } from "../src/adapters/registry.js";
+import type { SupportedAgentName } from "../src/core/agents.js";
 import { userEventsPath, userStateDirectory } from "../src/core/user.js";
+import { installProjectHooks } from "../src/install/registry.js";
 import {
   hasProjectHooks,
   installUserHooks,
@@ -141,6 +144,49 @@ describe("project hook detection", () => {
     ).toBe(false);
     expect(await hasProjectHooks(projectRoot, "claude")).toBe(false);
     expect(await hasProjectHooks(projectRoot, "unknown")).toBe(false);
+  });
+
+  it("covers failed tool calls for every agent's installed project hooks", async () => {
+    const tool = { tool_name: "Bash", tool_input: { command: "false" } };
+    const failedToolCalls: Record<SupportedAgentName, Record<string, unknown>> =
+      {
+        claude: { hook_event_name: "PostToolUseFailure", ...tool },
+        cursor: { hook_event_name: "postToolUseFailure", ...tool },
+        codex: {
+          hook_event_name: "PostToolUse",
+          ...tool,
+          tool_response: "Process exited with code 1",
+        },
+        devin: {
+          hook_event_name: "PostToolUse",
+          ...tool,
+          tool_response: { success: false, output: "", error: "exit 1" },
+        },
+        opencode: {
+          event: "tool.execute.after",
+          tool: "bash",
+          output: { metadata: { exit: 1 } },
+        },
+        polytoken: { event: "post_tool_use_failure", ...tool },
+      };
+
+    for (const [agent, payload] of Object.entries(failedToolCalls) as Array<
+      [SupportedAgentName, Record<string, unknown>]
+    >) {
+      const projectRoot = await temporaryDirectory(`.codecut-${agent}-`);
+      await installProjectHooks(projectRoot, agent);
+      const event = normalizeAgentEvent(agent, {
+        session_id: "session-1",
+        cwd: projectRoot,
+        ...payload,
+      });
+
+      expect(event.stage, agent).toBe("post-tool-failure");
+      expect(
+        await hasProjectHooks(projectRoot, agent, event.stage),
+        agent,
+      ).toBe(true);
+    }
   });
 
   it("inspects executable command fields without matching metadata", async () => {

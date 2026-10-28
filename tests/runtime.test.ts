@@ -23,7 +23,10 @@ import {
 } from "../src/core/project.js";
 import {
   DEFAULT_COMMENT_CONTEXT_PATTERNS,
+  DEFAULT_REMOTE_COMMAND_PATTERNS,
+  DEFAULT_TEST_COMMAND_PATTERNS,
   LEGACY_COMMENT_CONTEXT_PATTERNS,
+  matchesAny,
 } from "../src/core/patterns.js";
 
 const temporaryDirectories: string[] = [];
@@ -149,6 +152,73 @@ describe("persistent runtime installation", () => {
       version: 1,
       rules: [{ type: "require-ready-github-pr" }],
     });
+  });
+
+  it("migrates only the legacy default command patterns", () => {
+    // The original defaults, as saved in policies compiled before quoted
+    // commands were recognised.
+    const legacyTestPatterns = [
+      String.raw`(?:^|[;&|]\s*|\s)(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?test(?:\s|$|:)`,
+      String.raw`(?:^|[;&|]\s*|\s)(?:npx\s+)?vitest(?:\s|$)`,
+      String.raw`(?:^|[;&|]\s*|\s)(?:python(?:3)?\s+-m\s+)?pytest(?:\s|$)`,
+      String.raw`(?:^|[;&|]\s*|\s)cargo\s+test(?:\s|$)`,
+      String.raw`(?:^|[;&|]\s*|\s)go\s+test(?:\s|$)`,
+      String.raw`(?:^|[;&|]\s*|\s)(?:bundle\s+exec\s+)?rspec(?:\s|$)`,
+      String.raw`(?:^|[;&|]\s*|\s)(?:dotnet\s+test|mvn\s+test|gradle\s+test)(?:\s|$)`,
+    ];
+    const legacyRemotePatterns = [
+      String.raw`(?:^|[;&|]\s*|\s)ssh(?:\s|$)`,
+      String.raw`(?:^|[;&|]\s*|\s)gh\s+(?:workflow\s+run|run\s+rerun)(?:\s|$)`,
+      String.raw`(?:^|[;&|]\s*|\s)(?:circleci|buildkite-agent|actuate)\b`,
+      String.raw`(?:^|[;&|]\s*|\s)kubectl\s+exec(?:\s|$)`,
+    ];
+    const rule = (id: string, patterns: Record<string, unknown>) => ({
+      id,
+      directive: "Use local machines for testing",
+      source: { path: "CLAUDE.md", scope: "project", conditional: false },
+      mode: "block",
+      confirmed: true,
+      enabled: true,
+      ...patterns,
+    });
+    const policy = parsePolicyDocument(
+      JSON.stringify({
+        version: 1,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        agents: ["claude"],
+        sources: ["CLAUDE.md"],
+        rules: [
+          rule("local-testing-legacy", {
+            type: "local-testing",
+            testCommandPatterns: legacyTestPatterns,
+            remoteCommandPatterns: legacyRemotePatterns,
+            remoteToolPatterns: ["runner"],
+          }),
+          rule("require-passing-tests-legacy", {
+            type: "require-passing-tests",
+            commandPatterns: legacyTestPatterns,
+          }),
+          rule("require-passing-tests-custom", {
+            type: "require-passing-tests",
+            commandPatterns: ["make check"],
+          }),
+        ],
+      }),
+    );
+
+    expect(policy.rules[0]).toMatchObject({
+      testCommandPatterns: DEFAULT_TEST_COMMAND_PATTERNS,
+      remoteCommandPatterns: DEFAULT_REMOTE_COMMAND_PATTERNS,
+    });
+    expect(policy.rules[1]).toMatchObject({
+      commandPatterns: DEFAULT_TEST_COMMAND_PATTERNS,
+    });
+    expect(policy.rules[2]).toMatchObject({ commandPatterns: ["make check"] });
+    expect(matchesAny("ssh runner 'pytest'", legacyTestPatterns)).toBe(false);
+    expect(
+      matchesAny("ssh runner 'pytest'", DEFAULT_TEST_COMMAND_PATTERNS),
+    ).toBe(true);
   });
 
   it("migrates only the legacy default comment patterns", () => {

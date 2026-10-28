@@ -48,6 +48,7 @@ export type HashCommentMode =
 export type CommentScanOptions = {
   hashComments?: HashCommentMode;
   dashComments?: boolean;
+  semicolonComments?: boolean;
   regexLiterals?: boolean;
 };
 
@@ -58,6 +59,11 @@ const HASH_IS_NOT_A_COMMENT =
 
 const DASH_COMMENT_LANGUAGES =
   /\.(?:ada|adb|ads|agda|applescript|elm|hs|idr|lean|lhs|lua|purs|sql|vhd|vhdl)$/i;
+
+// Languages where a line starting with `;` is a comment rather than an
+// empty statement or a guard for the line before.
+const SEMICOLON_COMMENT_LANGUAGES =
+  /\.(?:asm|nasm|s|lisp|lsp|cl|el|clj|cljs|cljc|edn|scm|ss|rkt|ini)$/i;
 
 export function hashCommentModeForPath(filePath: string): HashCommentMode {
   const language = sourceLanguageForPath(filePath);
@@ -80,6 +86,10 @@ export function supportsDashComments(filePath: string): boolean {
   return DASH_COMMENT_LANGUAGES.test(filePath);
 }
 
+export function supportsSemicolonComments(filePath: string): boolean {
+  return SEMICOLON_COMMENT_LANGUAGES.test(filePath);
+}
+
 /** Comment syntax to recognize for a file, based on its extension. */
 export function commentScanOptionsForPath(
   filePath: string,
@@ -87,6 +97,7 @@ export function commentScanOptionsForPath(
   return {
     hashComments: hashCommentModeForPath(filePath),
     dashComments: supportsDashComments(filePath),
+    semicolonComments: supportsSemicolonComments(filePath),
     regexLiterals: sourceLanguageForPath(filePath) === "javascript",
   };
 }
@@ -314,7 +325,9 @@ function standaloneCommentPattern(options: CommentScanOptions): RegExp {
   if (options.dashComments ?? true) {
     leaders.push("--");
   }
-  leaders.push(";");
+  if (options.semicolonComments ?? true) {
+    leaders.push(";");
+  }
   return new RegExp(`^(?:(?:${leaders.join("|")})\\s?)(.+)$`);
 }
 
