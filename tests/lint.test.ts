@@ -208,6 +208,66 @@ describe("comment scanning", () => {
     ).toEqual(checks);
   });
 
+  it.each([
+    ["src/split.py", (i: number) => `part${i} = total // ${i + 2}`, []],
+    ["src/split.rb", (i: number) => `chars${i} = word${i}.split(//)`, []],
+    [
+      "scripts/fetch.sh",
+      (i: number) => `curl -fsSL https://example.com/f${i}.sh -o f${i}.sh`,
+      [],
+    ],
+    ["db/report.lua", (i: number) => `local part${i} = total // ${i + 2}`, []],
+    [
+      "src/split.ts",
+      (i: number) => `const part${i} = ${i}; // note ${i}`,
+      ["comment-quality"],
+    ],
+    [
+      "src/split.rs",
+      (i: number) => `let part${i} = ${i}; // note ${i}`,
+      ["comment-quality"],
+    ],
+  ])("counts // as a comment in %s only for C-family syntax", (filePath, line, checks) => {
+    const lines = Array.from({ length: 20 }, (_, index) => `+${line(index)}`);
+    const files = parseUnifiedDiff(
+      [
+        `diff --git a/${filePath} b/${filePath}`,
+        `--- a/${filePath}`,
+        `+++ b/${filePath}`,
+        "@@ -0,0 +1,20 @@",
+        ...lines,
+        "",
+      ].join("\n"),
+    );
+    const config = defaultLintConfig();
+    config.filePatterns = [...config.filePatterns, String.raw`\.lua$`];
+
+    expect(
+      runLint(files, config)
+        .findings.filter((finding) => finding.check !== "blast-radius")
+        .map((finding) => finding.check),
+    ).toEqual(checks);
+  });
+
+  it("finds a Python debug call after floor division", () => {
+    const files = parseUnifiedDiff(
+      [
+        "diff --git a/src/mid.py b/src/mid.py",
+        "--- a/src/mid.py",
+        "+++ b/src/mid.py",
+        "@@ -0,0 +1 @@",
+        "+mid = len(items) // 2; breakpoint()",
+        "",
+      ].join("\n"),
+    );
+
+    expect(
+      runLint(files, defaultLintConfig()).findings.map(
+        (finding) => finding.check,
+      ),
+    ).toContain("debug-artifacts");
+  });
+
   it("counts only the text lines of a doc comment", () => {
     expect(
       scanComments([

@@ -48,6 +48,7 @@ export type HashCommentMode =
 export type CommentScanOptions = {
   hashComments?: HashCommentMode;
   dashComments?: boolean;
+  slashComments?: boolean;
   semicolonComments?: boolean;
   regexLiterals?: boolean;
 };
@@ -90,6 +91,19 @@ export function supportsSemicolonComments(filePath: string): boolean {
   return SEMICOLON_COMMENT_LANGUAGES.test(filePath);
 }
 
+// `//` is division in Python, Lua and Elm, an operator in Ruby and Haskell,
+// and part of an unquoted URL in shell, so only C-family syntax treats it as
+// a comment.
+export function supportsSlashComments(filePath: string): boolean {
+  const language = sourceLanguageForPath(filePath);
+  return (
+    language !== "python" &&
+    language !== "ruby" &&
+    language !== "shell" &&
+    !supportsDashComments(filePath)
+  );
+}
+
 /** Comment syntax to recognize for a file, based on its extension. */
 export function commentScanOptionsForPath(
   filePath: string,
@@ -97,6 +111,7 @@ export function commentScanOptionsForPath(
   return {
     hashComments: hashCommentModeForPath(filePath),
     dashComments: supportsDashComments(filePath),
+    slashComments: supportsSlashComments(filePath),
     semicolonComments: supportsSemicolonComments(filePath),
     regexLiterals: sourceLanguageForPath(filePath) === "javascript",
   };
@@ -135,6 +150,7 @@ function analyzeSourceLines(
   const commentLines: CommentLine[] = [];
   const hashComments = options.hashComments ?? "whitespace";
   const dashComments = options.dashComments ?? true;
+  const slashComments = options.slashComments ?? true;
   const regexLiterals = options.regexLiterals ?? true;
   let contexts: ExecutableContext[] = [{ kind: "code" }];
   let inBlockComment = false;
@@ -229,7 +245,7 @@ function analyzeSourceLines(
         index += 1;
         continue;
       }
-      if (current === "/" && next === "/") {
+      if (slashComments && current === "/" && next === "/") {
         hasComment = true;
         break;
       }
@@ -316,7 +332,10 @@ export function scanCommentLines(
 
 function standaloneCommentPattern(options: CommentScanOptions): RegExp {
   const hashComments = options.hashComments ?? "whitespace";
-  const leaders = ["\\/\\/+"];
+  const leaders: string[] = [];
+  if (options.slashComments ?? true) {
+    leaders.push("\\/\\/+");
+  }
   if (hashComments === "php") {
     leaders.push("#(?!\\[)");
   } else if (hashComments !== "never") {
@@ -328,7 +347,10 @@ function standaloneCommentPattern(options: CommentScanOptions): RegExp {
   if (options.semicolonComments ?? true) {
     leaders.push(";");
   }
-  return new RegExp(`^(?:(?:${leaders.join("|")})\\s?)(.+)$`);
+  // With no line-comment syntax, an empty alternation would match every line.
+  return leaders.length === 0
+    ? /(?!)/
+    : new RegExp(`^(?:(?:${leaders.join("|")})\\s?)(.+)$`);
 }
 
 /**
