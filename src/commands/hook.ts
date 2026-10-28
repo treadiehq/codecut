@@ -75,6 +75,22 @@ export function warningAlreadyDelivered(
   );
 }
 
+/**
+ * When this session could have started changing files. A pre-tool receipt is
+ * written before its tool runs, so the earliest one bounds the session's
+ * work. Decision receipts are not a bound: an agent that only wires the stop
+ * hook records one per stop, after the work it judges.
+ */
+export function sessionStartTime(receipts: Receipt[]): Date | undefined {
+  const starts = receipts
+    .filter(
+      (receipt) =>
+        receipt.kind === "tool-start" || receipt.kind === "command-start",
+    )
+    .map((receipt) => Date.parse(receipt.timestamp));
+  return starts.length > 0 ? new Date(Math.min(...starts)) : undefined;
+}
+
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
@@ -344,17 +360,7 @@ export async function runHook(
     }
 
     let receipts = await readSessionReceipts(eventsFile, event.sessionId);
-    // Nothing is written before the first pre-tool receipt, so its timestamp
-    // bounds which files this session could have produced. With no earlier
-    // receipts (an agent that only wires the stop hook) there is no bound.
-    const sessionStartedAt =
-      receipts.length > 0
-        ? new Date(
-            Math.min(
-              ...receipts.map((receipt) => Date.parse(receipt.timestamp)),
-            ),
-          )
-        : undefined;
+    const sessionStartedAt = sessionStartTime(receipts);
     const newReceipts = deriveReceipts(policy, event);
     if (
       newReceipts.some(
