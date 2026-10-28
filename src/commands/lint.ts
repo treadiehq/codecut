@@ -4,10 +4,10 @@ import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
 import {
+  commentScanOptionsForPath,
   groupCommentBlocks,
   scanComments,
   stripNonExecutableText,
-  type HashCommentMode,
 } from "../core/comments.js";
 import {
   aggregateCommentStats,
@@ -28,8 +28,6 @@ import {
   DEFAULT_TODO_PATTERNS,
   debugArtifactPatternsForPath,
   matchesAny,
-  sourceLanguageForPath,
-  type SourceLanguage,
 } from "../core/patterns.js";
 import { findProjectRoot, loadPolicy } from "../core/project.js";
 import {
@@ -213,22 +211,6 @@ export async function resolveLintConfig(
   return config;
 }
 
-function hashCommentMode(language: SourceLanguage): HashCommentMode {
-  if (language === "python" || language === "ruby") {
-    return "anywhere";
-  }
-  if (language === "php") {
-    return "php";
-  }
-  return language === "javascript" ? "never" : "whitespace";
-}
-
-function supportsDashComments(filePath: string): boolean {
-  return /\.(?:ada|adb|ads|agda|applescript|elm|hs|idr|lean|lhs|lua|purs|sql|vhd|vhdl)$/i.test(
-    filePath,
-  );
-}
-
 function truncate(value: string, max = 160): string {
   const collapsed = value.trim().replace(/\s+/g, " ");
   return collapsed.length > max ? `${collapsed.slice(0, max - 1)}…` : collapsed;
@@ -251,7 +233,10 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
       config.checks.has("comment-quality") ||
       config.checks.has("todo-comments")
     ) {
-      const fileComments = scanComments(file.addedLines);
+      const fileComments = scanComments(
+        file.addedLines,
+        commentScanOptionsForPath(file.path),
+      );
       if (config.checks.has("comment-quality")) {
         addedCommentStats.push(
           measureAddedComments(file.path, file.addedLines),
@@ -309,12 +294,10 @@ export function runLint(files: FileDiff[], config: LintConfig): LintResult {
       config.checks.has("debug-artifacts") &&
       !matchesAny(file.path, config.testFilePatterns)
     ) {
-      const language = sourceLanguageForPath(file.path);
-      const codeLines = stripNonExecutableText(file.addedLines, {
-        hashComments: hashCommentMode(language),
-        dashComments: supportsDashComments(file.path),
-        regexLiterals: language === "javascript",
-      });
+      const codeLines = stripNonExecutableText(
+        file.addedLines,
+        commentScanOptionsForPath(file.path),
+      );
       const debugPatterns = debugArtifactPatternsForPath(
         file.path,
         config.debugPatterns,

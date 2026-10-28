@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  commentScanOptionsForPath,
   groupCommentBlocks,
   scanComments,
   type CommentLine,
@@ -375,8 +376,10 @@ function addedLinesByPath(event: NormalizedHookEvent): AddedLinesByPath[] {
       ];
 }
 
-function addedLines(event: NormalizedHookEvent): CommentLine[] {
-  return addedLinesByPath(event).flatMap((entry) => entry.lines);
+function addedComments(event: NormalizedHookEvent): CommentLine[] {
+  return addedLinesByPath(event).flatMap(({ path, lines }) =>
+    scanComments(lines, commentScanOptionsForPath(path)),
+  );
 }
 
 export function extractAddedComments(event: NormalizedHookEvent): string[] {
@@ -384,7 +387,7 @@ export function extractAddedComments(event: NormalizedHookEvent): string[] {
     return [];
   }
 
-  return scanComments(addedLines(event)).map((comment) => comment.text);
+  return addedComments(event).map((comment) => comment.text);
 }
 
 export function extractAddedCommentBlocks(
@@ -394,9 +397,7 @@ export function extractAddedCommentBlocks(
     return [];
   }
 
-  return groupCommentBlocks(
-    scanComments(addedLines(event)),
-  ).map((block) => block.map((comment) => comment.text));
+  return extractAddedCommentBlocksByPath(event).map((block) => block.comments);
 }
 
 export function extractAddedCommentBlocksByPath(
@@ -407,10 +408,12 @@ export function extractAddedCommentBlocksByPath(
   }
 
   return addedLinesByPath(event).flatMap(({ path, lines }) =>
-    groupCommentBlocks(scanComments(lines)).map((block) => ({
-      path,
-      comments: block.map((comment) => comment.text),
-    })),
+    groupCommentBlocks(scanComments(lines, commentScanOptionsForPath(path))).map(
+      (block) => ({
+        path,
+        comments: block.map((comment) => comment.text),
+      }),
+    ),
   );
 }
 

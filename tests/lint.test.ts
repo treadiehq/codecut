@@ -11,6 +11,7 @@ import {
   runLintCommand,
 } from "../src/commands/lint.js";
 import {
+  commentScanOptionsForPath,
   scanCommentLines,
   scanComments,
   stripNonExecutableText,
@@ -175,6 +176,77 @@ describe("comment scanning", () => {
       { line: 4, text: "TODO: Review the /* assembly */ branch" },
       { line: 5, text: "real block" },
     ]);
+  });
+
+  it("counts only the text lines of a doc comment", () => {
+    expect(
+      scanComments([
+        { line: 1, text: "  /**" },
+        { line: 2, text: "   * First constraint." },
+        { line: 3, text: "   * Second constraint." },
+        { line: 4, text: "   */" },
+        { line: 5, text: "  /** Inline doc. */" },
+        { line: 6, text: "  /* plain */" },
+      ]),
+    ).toEqual([
+      { line: 2, text: "First constraint." },
+      { line: 3, text: "Second constraint." },
+      { line: 5, text: "Inline doc." },
+      { line: 6, text: "plain" },
+    ]);
+  });
+
+  it("does not read preprocessor directives or attributes as comments", () => {
+    const header = [
+      { line: 1, text: "#if !defined(SWIFT_PASTE)" },
+      { line: 2, text: "# define SWIFT_PASTE_HELPER(x, y) x##y" },
+      { line: 3, text: "#pragma clang diagnostic ignored \"-Wauto-import\"" },
+      { line: 4, text: "#endif" },
+      { line: 5, text: "// Real comment." },
+    ];
+    expect(
+      scanComments(header, commentScanOptionsForPath("Generated-Swift.h")),
+    ).toEqual([{ line: 5, text: "Real comment." }]);
+    expect(
+      scanComments(
+        [
+          { line: 1, text: "#[derive(Debug)]" },
+          { line: 2, text: "struct Point;" },
+        ],
+        commentScanOptionsForPath("src/point.rs"),
+      ),
+    ).toEqual([]);
+    expect(
+      scanComments(
+        [
+          { line: 1, text: "#if canImport(AppKit)" },
+          { line: 2, text: "import AppKit" },
+          { line: 3, text: "#endif" },
+        ],
+        commentScanOptionsForPath("App.swift"),
+      ),
+    ).toEqual([]);
+    expect(
+      scanComments(
+        [
+          { line: 1, text: "#[Attribute]" },
+          { line: 2, text: "# Shell-style comment." },
+        ],
+        commentScanOptionsForPath("Thing.php"),
+      ),
+    ).toEqual([{ line: 2, text: "Shell-style comment." }]);
+    expect(
+      scanComments(
+        [{ line: 1, text: "# Python comment." }],
+        commentScanOptionsForPath("tool.py"),
+      ),
+    ).toEqual([{ line: 1, text: "Python comment." }]);
+    expect(
+      scanComments(
+        [{ line: 1, text: "--count;" }],
+        commentScanOptionsForPath("loop.js"),
+      ),
+    ).toEqual([]);
   });
 
   it("resets block-comment state across line gaps", () => {

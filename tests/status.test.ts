@@ -145,7 +145,12 @@ describe("policy self-test", () => {
     const projectRoot = await mkdtemp(
       path.join(os.tmpdir(), "codecut-ready-pr-test-"),
     );
-    temporaryDirectories.push(projectRoot);
+    // Point user config at an empty directory so the developer's own
+    // ~/.config/codecut rules are not merged into the tested policy.
+    const xdg = await mkdtemp(path.join(os.tmpdir(), "codecut-xdg-"));
+    temporaryDirectories.push(projectRoot, xdg);
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdg;
     await writePolicy(
       projectRoot,
       compilePolicy({
@@ -166,14 +171,22 @@ describe("policy self-test", () => {
       }),
     );
 
-    const result = await testPolicy(projectRoot);
-    expect(result.passed).toBe(true);
-    expect(result.results).toEqual([
-      expect.objectContaining({
-        status: "PASS",
-        detail: "sample was blocked",
-      }),
-    ]);
+    try {
+      const result = await testPolicy(projectRoot);
+      expect(result.passed).toBe(true);
+      expect(result.results).toEqual([
+        expect.objectContaining({
+          status: "PASS",
+          detail: "sample was blocked",
+        }),
+      ]);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.XDG_CONFIG_HOME;
+      } else {
+        process.env.XDG_CONFIG_HOME = previous;
+      }
+    }
   });
 });
 

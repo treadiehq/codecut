@@ -1804,7 +1804,7 @@ describe("starter policy enforcement", () => {
         acceptBlockingRules: true,
       });
 
-      expect(blocks.map((block) => block.length)).toEqual([3, 3]);
+      expect(blocks.map((block) => block.length)).toEqual([1, 1]);
       expect(
         evaluatePolicy({
           policy: limitedPolicy,

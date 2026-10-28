@@ -210,6 +210,75 @@ describe("working-tree fingerprints", () => {
     });
   });
 
+  it("ignores files that predate the session when a start time is given", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-stale-untracked-"),
+    );
+    temporaryDirectories.push(directory);
+    await execFileAsync("git", ["init", "--quiet"], { cwd: directory });
+    const trackedPath = path.join(directory, "tracked.ts");
+    await writeFile(trackedPath, "export const value = 1;\n");
+    await execFileAsync("git", ["add", "tracked.ts"], { cwd: directory });
+    await execFileAsync(
+      "git",
+      [
+        "-c",
+        "user.name=Codecut Test",
+        "-c",
+        "user.email=codecut@example.com",
+        "commit",
+        "--quiet",
+        "-m",
+        "initial",
+      ],
+      { cwd: directory },
+    );
+    const longComment = [
+      "// one",
+      "// two",
+      "// three",
+      "// four",
+      "export const x = 1;",
+      "",
+    ].join("\n");
+    // A stale build artifact and a stale local edit, both from before the
+    // session: nothing the current agent wrote.
+    await mkdir(path.join(directory, "build"));
+    const stalePath = path.join(directory, "build", "Generated.swift");
+    await writeFile(stalePath, longComment);
+    await writeFile(trackedPath, `${longComment}export const value = 1;\n`);
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await utimes(stalePath, yesterday, yesterday);
+    await utimes(trackedPath, yesterday, yesterday);
+    // Written during the session.
+    const freshPath = path.join(directory, "fresh.ts");
+    await writeFile(freshPath, longComment);
+    const sessionStart = new Date(Date.now() - 60 * 1000);
+
+    const scoped = await inspectAddedComments(directory, {
+      since: sessionStart,
+    });
+    expect(scoped.blocks.map((block) => block.path)).toEqual(["fresh.ts"]);
+    expect(scoped.stats.map((stat) => stat.path)).toEqual(["fresh.ts"]);
+
+    // Without a start time every uncommitted file is still inspected.
+    const unscoped = await inspectAddedComments(directory);
+    expect(unscoped.blocks.map((block) => block.path).sort()).toEqual([
+      "build/Generated.swift",
+      "fresh.ts",
+      "tracked.ts",
+    ]);
+
+    // The blast-radius count applies the same floor: only fresh.ts (5 lines).
+    await expect(
+      inspectDiff(directory, [], { since: sessionStart }),
+    ).resolves.toMatchObject({ files: 1, added: 5, deleted: 0, complete: true });
+    await expect(inspectDiff(directory, [])).resolves.toMatchObject({
+      files: 3,
+      complete: true,
+    });
+  });
+
   it("excludes the generated OpenCode plugin from comment density", async () => {
     const directory = await mkdtemp(
       path.join(os.tmpdir(), "codecut-opencode-comments-"),

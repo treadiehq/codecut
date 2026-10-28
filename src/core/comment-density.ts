@@ -1,9 +1,8 @@
 import {
+  commentScanOptionsForPath,
   scanCommentLines,
   type CommentLine,
-  type CommentScanOptions,
 } from "./comments.js";
-import { sourceLanguageForPath } from "./patterns.js";
 
 export const DEFAULT_MAX_COMMENT_PERCENTAGE = 25;
 export const DEFAULT_MIN_ADDED_LINES_FOR_COMMENT_PERCENTAGE = 20;
@@ -19,28 +18,6 @@ export type CommentDensity = {
   commentLines: number;
 };
 
-function supportsDashComments(filePath: string): boolean {
-  return /\.(?:ada|adb|ads|agda|applescript|elm|hs|idr|lean|lhs|lua|purs|sql|vhd|vhdl)$/i.test(
-    filePath,
-  );
-}
-
-function scanOptions(filePath: string): CommentScanOptions {
-  const language = sourceLanguageForPath(filePath);
-  return {
-    hashComments:
-      language === "python" || language === "ruby"
-        ? "anywhere"
-        : language === "php"
-          ? "php"
-          : language === "shell"
-            ? "whitespace"
-            : "never",
-    dashComments: supportsDashComments(filePath),
-    regexLiterals: language === "javascript",
-  };
-}
-
 export function measureAddedComments(
   filePath: string,
   lines: CommentLine[],
@@ -48,7 +25,8 @@ export function measureAddedComments(
   return {
     path: filePath,
     sourceLines: lines.filter((line) => line.text.trim().length > 0).length,
-    commentLines: scanCommentLines(lines, scanOptions(filePath)).length,
+    commentLines: scanCommentLines(lines, commentScanOptionsForPath(filePath))
+      .length,
   };
 }
 

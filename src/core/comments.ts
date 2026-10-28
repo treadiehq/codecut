@@ -1,3 +1,5 @@
+import { sourceLanguageForPath } from "./patterns.js";
+
 export type CommentLine = {
   line: number;
   text: string;
@@ -48,6 +50,46 @@ export type CommentScanOptions = {
   dashComments?: boolean;
   regexLiterals?: boolean;
 };
+
+// Languages where a leading `#` is a preprocessor directive or attribute
+// (`#if`, `#pragma`, `#[derive]`, `#region`, `#available`), never a comment.
+const HASH_IS_NOT_A_COMMENT =
+  /\.(?:c|cc|cpp|cxx|c\+\+|h|hh|hpp|hxx|h\+\+|m|mm|swift|rs|cs|d|scala|java|kt|kts|go)$/i;
+
+const DASH_COMMENT_LANGUAGES =
+  /\.(?:ada|adb|ads|agda|applescript|elm|hs|idr|lean|lhs|lua|purs|sql|vhd|vhdl)$/i;
+
+export function hashCommentModeForPath(filePath: string): HashCommentMode {
+  const language = sourceLanguageForPath(filePath);
+  if (language === "python" || language === "ruby") {
+    return "anywhere";
+  }
+  if (language === "php") {
+    return "php";
+  }
+  if (language === "shell") {
+    return "whitespace";
+  }
+  if (language === "javascript" || HASH_IS_NOT_A_COMMENT.test(filePath)) {
+    return "never";
+  }
+  return "whitespace";
+}
+
+export function supportsDashComments(filePath: string): boolean {
+  return DASH_COMMENT_LANGUAGES.test(filePath);
+}
+
+/** Comment syntax to recognize for a file, based on its extension. */
+export function commentScanOptionsForPath(
+  filePath: string,
+): CommentScanOptions {
+  return {
+    hashComments: hashCommentModeForPath(filePath),
+    dashComments: supportsDashComments(filePath),
+    regexLiterals: sourceLanguageForPath(filePath) === "javascript",
+  };
+}
 
 function canStartRegexLiteral(code: string): boolean {
   const before = code.trimEnd();
@@ -261,16 +303,32 @@ export function scanCommentLines(
   return analyzeSourceLines(lines, options).commentLines;
 }
 
+function standaloneCommentPattern(options: CommentScanOptions): RegExp {
+  const hashComments = options.hashComments ?? "whitespace";
+  const leaders = ["\\/\\/+"];
+  if (hashComments === "php") {
+    leaders.push("#(?!\\[)");
+  } else if (hashComments !== "never") {
+    leaders.push("#");
+  }
+  if (options.dashComments ?? true) {
+    leaders.push("--");
+  }
+  leaders.push(";");
+  return new RegExp(`^(?:(?:${leaders.join("|")})\\s?)(.+)$`);
+}
+
 /**
- * Extract human comment text from source lines. Handles `//`, `#`, `--`, and
- * `;` line comments plus `/*`-style block comments. Input lines may be
- * non-contiguous (for example, added lines from a diff); block-comment state
- * resets across line-number gaps so code after an unseen `*\/` is not
- * misread as a comment. A `/*` preceded by a quote character is treated as
- * string content, not a comment opener, to avoid cascading false positives.
+ * Extract comment text from source lines: `//`, `#`, `--`, `;` and block
+ * comments. Options from `commentScanOptionsForPath` decide whether `#` and
+ * `--` count (all do by default); block state resets at line-number gaps.
  */
-export function scanComments(lines: CommentLine[]): CommentLine[] {
+export function scanComments(
+  lines: CommentLine[],
+  options: CommentScanOptions = {},
+): CommentLine[] {
   const comments: CommentLine[] = [];
+  const standalonePattern = standaloneCommentPattern(options);
   let inBlockComment = false;
   let previousLine: number | undefined;
 
@@ -287,8 +345,8 @@ export function scanComments(lines: CommentLine[]): CommentLine[] {
 
     if (inBlockComment) {
       const content = trimmed
-        .replace(/^\*\s?/, "")
         .replace(/\*\/.*$/, "")
+        .replace(/^\*+\s?/, "")
         .trim();
       if (content) {
         comments.push({ line, text: content });
@@ -299,7 +357,7 @@ export function scanComments(lines: CommentLine[]): CommentLine[] {
       continue;
     }
 
-    const standalone = trimmed.match(/^(?:(?:\/\/+|#|--|;)\s?)(.+)$/);
+    const standalone = trimmed.match(standalonePattern);
     if (standalone?.[1]) {
       comments.push({ line, text: standalone[1].trim() });
       continue;
@@ -309,7 +367,10 @@ export function scanComments(lines: CommentLine[]): CommentLine[] {
     if (blockStart >= 0 && !/["'`]/.test(trimmed.slice(0, blockStart))) {
       const afterStart = trimmed.slice(blockStart + 2);
       const closes = afterStart.includes("*/");
-      const content = afterStart.replace(/\*\/.*$/, "").trim();
+      const content = afterStart
+        .replace(/\*\/.*$/, "")
+        .replace(/^\*+\s?/, "")
+        .trim();
       if (content) {
         comments.push({ line, text: content });
       }
