@@ -213,6 +213,7 @@ export const receiptSchema = z.object({
   warningDelivered: z.boolean().optional(),
   ruleIds: z.array(z.string()).optional(),
   violations: z.array(ruleViolationSchema).optional(),
+  deletedAtStart: z.array(z.string()).max(1_000).optional(),
   diffFiles: z.number().int().nonnegative().optional(),
   diffChangedLines: z.number().int().nonnegative().optional(),
 });

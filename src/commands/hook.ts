@@ -18,6 +18,7 @@ import {
   extractCommand,
 } from "../core/events.js";
 import {
+  deletedTrackedPaths,
   findGitRoot,
   inspectAddedComments,
   inspectDiff,
@@ -89,6 +90,30 @@ export function sessionStartTime(receipts: Receipt[]): Date | undefined {
     )
     .map((receipt) => Date.parse(receipt.timestamp));
   return starts.length > 0 ? new Date(Math.min(...starts)) : undefined;
+}
+
+/**
+ * Tracked files already deleted when the session began, from its first
+ * pre-tool receipt. A later receipt's snapshot could include the session's
+ * own deletions, so none is used in its place.
+ */
+export function sessionDeletedAtStart(
+  receipts: Receipt[],
+): ReadonlySet<string> | undefined {
+  const first = receipts
+    .filter(
+      (receipt) =>
+        receipt.kind === "tool-start" || receipt.kind === "command-start",
+    )
+    .reduce<Receipt | undefined>(
+      (earliest, receipt) =>
+        !earliest ||
+        Date.parse(receipt.timestamp) < Date.parse(earliest.timestamp)
+          ? receipt
+          : earliest,
+      undefined,
+    );
+  return first?.deletedAtStart ? new Set(first.deletedAtStart) : undefined;
 }
 
 async function readStdin(): Promise<string> {
@@ -372,6 +397,20 @@ export async function runHook(
       )
     ) {
       const stateFingerprint = await workingTreeFingerprint(diffRoot);
+      const sessionStart =
+        sessionStartedAt === undefined
+          ? newReceipts.find(
+              (receipt) =>
+                receipt.kind === "command-start" ||
+                receipt.kind === "tool-start",
+            )
+          : undefined;
+      if (sessionStart) {
+        const deleted = await deletedTrackedPaths(diffRoot);
+        if (deleted && deleted.length > 0) {
+          sessionStart.deletedAtStart = deleted;
+        }
+      }
       for (const receipt of newReceipts) {
         if (
           receipt.kind === "command" ||
@@ -406,7 +445,10 @@ export async function runHook(
       pushLintEvidence,
     ] = await Promise.all([
       event.stage === "stop" || event.stage === "agent-response"
-        ? inspectDiff(diffRoot, receipts, { since: sessionStartedAt })
+        ? inspectDiff(diffRoot, receipts, {
+            since: sessionStartedAt,
+            deletedAtStart: sessionDeletedAtStart(receipts),
+          })
         : undefined,
       event.stage === "stop"
         ? inspectAddedComments(diffRoot, { since: sessionStartedAt })

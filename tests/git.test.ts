@@ -3,6 +3,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  rename,
   rm,
   utimes,
   writeFile,
@@ -16,6 +17,7 @@ import {
   exceedsCommentPercentage,
 } from "../src/core/comment-density.js";
 import {
+  deletedTrackedPaths,
   inspectAddedCommentBlocks,
   inspectAddedComments,
   inspectDiff,
@@ -277,6 +279,69 @@ describe("working-tree fingerprints", () => {
       files: 3,
       complete: true,
     });
+  });
+
+  it("ignores deletions already present when the session started", async () => {
+    const directory = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-stale-deletions-"),
+    );
+    temporaryDirectories.push(directory);
+    const git = (...args: string[]) =>
+      execFileAsync(
+        "git",
+        [
+          "-c",
+          "user.name=Codecut Test",
+          "-c",
+          "user.email=codecut@example.com",
+          ...args,
+        ],
+        { cwd: directory },
+      );
+    await git("init", "--quiet");
+    await mkdir(path.join(directory, "old"));
+    await mkdir(path.join(directory, "src"));
+    const files: Record<string, number> = {
+      "old/tracked.txt": 10,
+      "src/mv.txt": 4,
+      "src/staged.txt": 3,
+      "src/gone.ts": 2,
+      "src/app.ts": 1,
+    };
+    for (const [file, lines] of Object.entries(files)) {
+      await writeFile(path.join(directory, file), "line\n".repeat(lines));
+    }
+    await git("add", ".");
+    await git("commit", "--quiet", "-m", "initial");
+
+    // Before the session: a plain delete, a plain rename, and a staged delete.
+    await rm(path.join(directory, "old", "tracked.txt"));
+    const renamed = path.join(directory, "src", "renamed.txt");
+    await rename(path.join(directory, "src", "mv.txt"), renamed);
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await utimes(renamed, yesterday, yesterday);
+    await git("rm", "--quiet", "src/staged.txt");
+    const deletedAtStart = await deletedTrackedPaths(directory);
+    expect(deletedAtStart?.sort()).toEqual([
+      "old/tracked.txt",
+      "src/mv.txt",
+      "src/staged.txt",
+    ]);
+    const sessionStart = new Date(Date.now() - 60 * 1000);
+
+    // During the session: one edit and one deletion of its own.
+    await writeFile(path.join(directory, "src", "app.ts"), "line\nline\n");
+    await rm(path.join(directory, "src", "gone.ts"));
+
+    await expect(
+      inspectDiff(directory, [], {
+        since: sessionStart,
+        deletedAtStart: new Set(deletedAtStart),
+      }),
+    ).resolves.toMatchObject({ files: 2, added: 1, deleted: 2, complete: true });
+    await expect(
+      inspectDiff(directory, [], { since: sessionStart }),
+    ).resolves.toMatchObject({ files: 5, added: 1, deleted: 19 });
   });
 
   it("excludes the generated OpenCode plugin from comment density", async () => {
