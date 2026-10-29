@@ -614,6 +614,31 @@ describe("generic agent hook protocol", () => {
     });
   });
 
+  it("starts the session at its first pre-tool receipt, not a stop decision", () => {
+    const receipt = (kind: Receipt["kind"], timestamp: string): Receipt => ({
+      version: 1,
+      id: `${kind}-${timestamp}`,
+      timestamp,
+      sessionId: "session-1",
+      kind,
+    });
+
+    expect(
+      sessionStartTime([
+        receipt("decision", "2026-01-01T00:00:01.000Z"),
+        receipt("decision", "2026-01-01T00:00:05.000Z"),
+      ]),
+    ).toBeUndefined();
+    expect(
+      sessionStartTime([
+        receipt("decision", "2026-01-01T00:00:01.000Z"),
+        receipt("command-start", "2026-01-01T00:00:03.000Z"),
+        receipt("tool-start", "2026-01-01T00:00:02.000Z"),
+        receipt("edit", "2026-01-01T00:00:04.000Z"),
+      ]),
+    ).toEqual(new Date("2026-01-01T00:00:02.000Z"));
+  });
+
   it("does not charge a session for deletions it inherited", async () => {
     const repositoryRoot = process.cwd();
     // Outside this repository, so only the fixture's own Git state counts.
@@ -700,31 +725,6 @@ describe("generic agent hook protocol", () => {
 
     await rm(path.join(projectRoot, "session.txt"));
     expect(runHook(stop)).toContain("Keep changes small");
-  });
-
-  it("starts the session at its first pre-tool receipt, not a stop decision", () => {
-    const receipt = (kind: Receipt["kind"], timestamp: string): Receipt => ({
-      version: 1,
-      id: `${kind}-${timestamp}`,
-      timestamp,
-      sessionId: "session-1",
-      kind,
-    });
-
-    expect(
-      sessionStartTime([
-        receipt("decision", "2026-01-01T00:00:01.000Z"),
-        receipt("decision", "2026-01-01T00:00:05.000Z"),
-      ]),
-    ).toBeUndefined();
-    expect(
-      sessionStartTime([
-        receipt("decision", "2026-01-01T00:00:01.000Z"),
-        receipt("command-start", "2026-01-01T00:00:03.000Z"),
-        receipt("tool-start", "2026-01-01T00:00:02.000Z"),
-        receipt("edit", "2026-01-01T00:00:04.000Z"),
-      ]),
-    ).toEqual(new Date("2026-01-01T00:00:02.000Z"));
   });
 
   it("does not make generic a native setup target", () => {
