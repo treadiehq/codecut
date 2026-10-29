@@ -1704,6 +1704,34 @@ describe("starter policy enforcement", () => {
     ]);
   });
 
+  it.each([
+    ["NotebookEdit", {}, ["TODO remove this hack"], 2],
+    ["notebook_edit", {}, ["TODO remove this hack"], 2],
+    ["NotebookEdit", { cell_type: "markdown" }, [], 2],
+    ["NotebookEdit", { edit_mode: "delete" }, [], undefined],
+  ])(
+    "reads %s cell source %j",
+    (toolName, cell, comments, changedLines) => {
+      const event = hookEvent("post-tool", {
+        toolName,
+        toolInput: {
+          notebook_path: "analysis.ipynb",
+          new_source: "# TODO remove this hack\nprint(1)",
+          ...cell,
+        },
+        toolOutput: "updated",
+      });
+
+      expect(extractEditedPaths(event)).toEqual(["analysis.ipynb"]);
+      expect(extractAddedComments(event)).toEqual(comments);
+      expect(
+        deriveReceipts(policy(), event)
+          .filter((receipt) => receipt.kind === "edit")
+          .map((receipt) => receipt.changedLines),
+      ).toEqual([changedLines]);
+    },
+  );
+
   it("counts apply_patch changed lines per file section", () => {
     const patch = (lines: string[]) =>
       deriveReceipts(
