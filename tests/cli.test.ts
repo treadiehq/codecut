@@ -614,6 +614,67 @@ describe("generic agent hook protocol", () => {
     });
   });
 
+  it("delivers a Devin stop warning first raised while the stop hook was active", async () => {
+    const repositoryRoot = process.cwd();
+    const projectRoot = await mkdtemp(
+      path.join(repositoryRoot, ".codecut-devin-stop-warning-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const policy = compilePolicy({
+      directives: [],
+      sources: [],
+      agent: "devin",
+      acceptBlockingRules: true,
+    });
+    await writePolicy(projectRoot, {
+      ...policy,
+      rules: policy.rules.filter(
+        (rule) => rule.type === "verification-evidence",
+      ),
+    });
+    await mkdir(path.join(projectRoot, "src"), { recursive: true });
+    await writeFile(
+      path.join(projectRoot, "src", "example.ts"),
+      "export const example = true;\n",
+    );
+    const runStop = (stopHookActive: boolean) => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "devin",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify({
+            hook_event_name: "Stop",
+            session_id: "devin-stop-warning",
+            cwd: projectRoot,
+            stop_hook_active: stopHookActive,
+          }),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, unknown>;
+    };
+
+    expect(runStop(true)).toEqual({});
+    expect(runStop(false)).toEqual({
+      decision: "block",
+      reason: expect.stringContaining("Verify"),
+    });
+    expect(runStop(false)).toEqual({});
+  });
+
   it("starts the session at its first pre-tool receipt, not a stop decision", () => {
     const receipt = (kind: Receipt["kind"], timestamp: string): Receipt => ({
       version: 1,

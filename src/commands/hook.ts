@@ -461,9 +461,9 @@ export async function runHook(
             typeof output.reason === "string" &&
             output.reason.trim().length > 0
           : decision.outcome === "warn" && agent === "devin"
-            ? event.stage === "pre-tool"
-              ? false
-              : true
+            ? // Devin's pre-tool response has no advisory field, and its stop
+              // response is empty once the stop hook has already fired.
+              event.stage !== "pre-tool" && Object.keys(output).length > 0
             : decision.outcome === "warn" && agent === "generic"
               ? output.action === "continue" &&
                 typeof output.message === "string" &&
