@@ -229,9 +229,21 @@ function editPath(input: unknown): string | undefined {
 }
 
 function editContent(input: unknown): string | undefined {
+  // Notebook edits carry the cell's new text as `new_source`; a deleted
+  // cell leaves no new text, whatever the field holds.
+  if (objectValue(input, "edit_mode") === "delete") {
+    return undefined;
+  }
   const content =
-    objectValue(input, "new_string") ?? objectValue(input, "content");
+    objectValue(input, "new_string") ??
+    objectValue(input, "new_source") ??
+    objectValue(input, "content");
   return typeof content === "string" ? content : undefined;
+}
+
+/** A markdown notebook cell holds prose; its `# Heading` is not a comment. */
+function isMarkdownCell(input: unknown): boolean {
+  return objectValue(input, "cell_type") === "markdown";
 }
 
 function nestedEditEntries(event: NormalizedHookEvent): EditEntry[] | undefined {
@@ -363,7 +375,9 @@ function addedLinesByPath(event: NormalizedHookEvent): AddedLinesByPath[] {
     );
   }
 
-  const content = editContent(event.toolInput);
+  const content = isMarkdownCell(event.toolInput)
+    ? undefined
+    : editContent(event.toolInput);
   return content === undefined
     ? []
     : [
@@ -475,7 +489,9 @@ function isCommandTool(toolName: string | undefined): boolean {
 function isEditTool(toolName: string | undefined): boolean {
   return Boolean(
     toolName &&
-      /^(?:Edit|Write|MultiEdit|NotebookEdit|apply[_-]?patch)$/i.test(toolName),
+      /^(?:Edit|Write|MultiEdit|notebook[_-]?edit|apply[_-]?patch)$/i.test(
+        toolName,
+      ),
   );
 }
 
