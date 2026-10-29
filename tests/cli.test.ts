@@ -12,7 +12,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { sessionStartTime } from "../src/commands/hook.js";
 import { compilePolicy } from "../src/core/compiler.js";
-import { writePolicy } from "../src/core/project.js";
+import { ensureLocalLogIgnored, writePolicy } from "../src/core/project.js";
 import type { Receipt } from "../src/core/schema.js";
 
 const temporaryDirectories: string[] = [];
@@ -698,6 +698,94 @@ describe("generic agent hook protocol", () => {
         receipt("edit", "2026-01-01T00:00:04.000Z"),
       ]),
     ).toEqual(new Date("2026-01-01T00:00:02.000Z"));
+  });
+
+  it("does not charge a session for deletions it inherited", async () => {
+    const repositoryRoot = process.cwd();
+    // Outside this repository, so only the fixture's own Git state counts.
+    const projectRoot = await mkdtemp(
+      path.join(os.tmpdir(), "codecut-inherited-deletion-"),
+    );
+    temporaryDirectories.push(projectRoot);
+    const git = (...args: string[]) =>
+      spawnSync(
+        "git",
+        [
+          "-c",
+          "user.name=Codecut Test",
+          "-c",
+          "user.email=codecut@example.com",
+          ...args,
+        ],
+        { cwd: projectRoot, encoding: "utf8" },
+      );
+    expect(git("init", "--quiet").status).toBe(0);
+    await writePolicy(projectRoot, {
+      version: 1,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      agents: ["claude"],
+      sources: ["CLAUDE.md"],
+      rules: [
+        {
+          id: "blast-radius-small",
+          type: "blast-radius",
+          directive: "Keep changes small",
+          source: { path: "CLAUDE.md", scope: "project", conditional: false },
+          mode: "warn",
+          confirmed: true,
+          enabled: true,
+          maxFiles: 5,
+          maxChangedLines: 5,
+        },
+      ],
+    });
+    await ensureLocalLogIgnored(projectRoot);
+    await writeFile(path.join(projectRoot, "inherited.txt"), "line\n".repeat(10));
+    await writeFile(path.join(projectRoot, "session.txt"), "line\n".repeat(8));
+    expect(git("add", ".").status).toBe(0);
+    expect(git("commit", "--quiet", "-m", "initial").status).toBe(0);
+    await rm(path.join(projectRoot, "inherited.txt"));
+
+    const runHook = (input: Record<string, unknown>) => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          path.join(repositoryRoot, "src", "cli.ts"),
+          "hook",
+          "--agent",
+          "claude",
+        ],
+        {
+          cwd: repositoryRoot,
+          input: JSON.stringify({
+            session_id: "inherited-deletion",
+            cwd: projectRoot,
+            ...input,
+          }),
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            XDG_CONFIG_HOME: path.join(projectRoot, "config"),
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      return JSON.stringify(JSON.parse(result.stdout));
+    };
+    const stop = { hook_event_name: "Stop", stop_hook_active: false };
+
+    runHook({
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "ls" },
+    });
+    expect(runHook(stop)).not.toContain("Keep changes small");
+
+    await rm(path.join(projectRoot, "session.txt"));
+    expect(runHook(stop)).toContain("Keep changes small");
   });
 
   it("does not make generic a native setup target", () => {

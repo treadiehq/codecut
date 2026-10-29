@@ -40,6 +40,11 @@ export type InspectedAddedComments = {
 export type WorkingTreeInspectionOptions = {
   /** Skip files last modified before this time; they predate the session. */
   since?: Date;
+  /**
+   * Project-relative paths already deleted when the session began. A deleted
+   * file has no modification time for `since` to check.
+   */
+  deletedAtStart?: ReadonlySet<string>;
 };
 
 async function modifiedBefore(
@@ -53,6 +58,22 @@ async function modifiedBefore(
     return (await lstat(absolutePath)).mtimeMs < since.getTime();
   } catch {
     return false;
+  }
+}
+
+async function inheritedDeletion(
+  absolutePath: string,
+  relativePath: string,
+  deletedAtStart: ReadonlySet<string> | undefined,
+): Promise<boolean> {
+  if (!deletedAtStart?.has(relativePath)) {
+    return false;
+  }
+  try {
+    await lstat(absolutePath);
+    return false;
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT";
   }
 }
 
@@ -648,6 +669,47 @@ export async function inspectAddedCommentBlocks(
   return (await inspectAddedComments(cwd, options)).blocks;
 }
 
+/** Bounds how many paths a session-start receipt records. */
+export const DELETED_AT_START_LIMIT = 1_000;
+
+/**
+ * Project-relative paths of tracked files deleted relative to HEAD, staged or
+ * not. Undefined when there is no Git history to compare against.
+ */
+export async function deletedTrackedPaths(
+  cwd: string,
+): Promise<string[] | undefined> {
+  const projectRoot = await realpath(cwd);
+  const gitRoot = (
+    await git(projectRoot, ["rev-parse", "--show-toplevel"])
+  )?.trim();
+  if (!gitRoot) {
+    return undefined;
+  }
+  const prefix = path
+    .relative(gitRoot, projectRoot)
+    .split(path.sep)
+    .join("/");
+  const output = await git(gitRoot, [
+    "diff",
+    "--name-only",
+    "-z",
+    "--no-renames",
+    "--diff-filter=D",
+    "HEAD",
+    "--",
+    prefix || ".",
+  ]);
+  if (output === undefined) {
+    return undefined;
+  }
+  return output
+    .split("\0")
+    .filter(Boolean)
+    .flatMap((file) => projectRelativePath(gitRoot, projectRoot, file) ?? [])
+    .slice(0, DELETED_AT_START_LIMIT);
+}
+
 export async function inspectDiff(
   cwd: string,
   receipts: Receipt[],
@@ -689,11 +751,14 @@ export async function inspectDiff(
               projectRoot,
               entry.path,
             );
+            const absolutePath = path.resolve(gitRoot, entry.path);
             if (
               relativePath &&
-              !(await modifiedBefore(
-                path.resolve(gitRoot, entry.path),
-                options.since,
+              !(await modifiedBefore(absolutePath, options.since)) &&
+              !(await inheritedDeletion(
+                absolutePath,
+                relativePath,
+                options.deletedAtStart,
               ))
             ) {
               entries.push({ ...entry, path: relativePath });
@@ -753,7 +818,15 @@ export async function inspectDiff(
     state.paths,
     options.since,
   )) {
-    parsed.paths.add(changedPath);
+    if (
+      !(await inheritedDeletion(
+        path.resolve(cwd, changedPath),
+        changedPath,
+        options.deletedAtStart,
+      ))
+    ) {
+      parsed.paths.add(changedPath);
+    }
   }
 
   if (parsed.paths.size === 0) {
